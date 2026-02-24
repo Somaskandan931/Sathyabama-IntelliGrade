@@ -1,24 +1,50 @@
-fastapi==0.111.0
-uvicorn==0.30.1
+# ── Web Framework ─────────────────────────────────────────────────────────────
+# fastapi 0.109.x ships WITHOUT fastapi-cli, so no typer conflict with spacy
+fastapi==0.109.2
+uvicorn==0.27.1
 python-multipart==0.0.9
-pillow==10.3.0
-opencv-python-headless==4.9.0.80
-pytesseract==0.3.10
-transformers==4.41.2
+
+# ── Machine Learning ──────────────────────────────────────────────────────────
 torch==2.3.0
+transformers==4.41.2
+safetensors>=0.4.1
 sentence-transformers==3.0.0
-spacy==3.7.4
+
+# ── OCR ───────────────────────────────────────────────────────────────────────
+pytesseract==0.3.10
+pdf2image==1.17.0
+PyMuPDF==1.24.5
+
+# ── NLP ───────────────────────────────────────────────────────────────────────
+# spacy 3.8.x is compatible with typer>=0.12 (no conflict with fastapi)
+spacy==3.8.2
 nltk==3.8.1
+pyspellchecker==0.8.1
+
+# ── Computer Vision ───────────────────────────────────────────────────────────
+opencv-python-headless==4.9.0.80
+Pillow==10.3.0
+
+# ── LLM / AI APIs ─────────────────────────────────────────────────────────────
 google-generativeai==0.7.0
+
+# ── Database ──────────────────────────────────────────────────────────────────
 sqlalchemy==2.0.30
-psycopg2-binary==2.9.9
-python-dotenv==1.0.1
-numpy==1.26.4
-scipy==1.13.1
-scikit-learn==1.5.0
+# SQLite is used by default (no extra driver needed).
+# Uncomment for PostgreSQL in production:
+# psycopg2-binary==2.9.9
+
+# ── API / Async ───────────────────────────────────────────────────────────────
 pydantic==2.7.3
 httpx==0.27.0
 aiofiles==23.2.1
+python-dotenv==1.0.1
+
+# ── Data / ML Utils ───────────────────────────────────────────────────────────
+numpy==1.26.4
+scipy==1.13.1
+scikit-learn==1.5.0
 PyPDF2==3.0.1
-pdf2image==1.17.0
-pyspellchecker==0.8.1
+
+# ── Frontend ──────────────────────────────────────────────────────────────────
+streamlit==1.35.0
