@@ -1,0 +1,144 @@
+# ===============================
+# Python
+# ===============================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ===============================
+# Virtual Environments
+# ===============================
+venv/
+env/
+ENV/
+.venv/
+
+# ===============================
+# Environment Variables
+# ===============================
+.env
+.env.local
+.env.*.local
+
+# ===============================
+# Logs
+# ===============================
+logs/
+*.log
+
+# ===============================
+# Database
+# ===============================
+*.db
+*.sqlite3
+
+# ===============================
+# Uploads / Generated Files
+# ===============================
+uploads/
+outputs/
+results/
+tmp/
+temp/
+
+# ===============================
+# Datasets
+# ===============================
+datasets/raw/
+datasets/generated/
+datasets/training/
+datasets/export/
+
+# keep structure but not data
+!datasets/.gitkeep
+
+# ===============================
+# Model Weights
+# ===============================
+models/*.pt
+models/*.pth
+models/*.bin
+models/*.ckpt
+models/*.safetensors
+
+# Large model folders
+models/trocr-finetuned/
+models/checkpoints/
+
+# ===============================
+# HuggingFace Cache
+# ===============================
+.cache/
+.huggingface/
+hf_cache/
+
+# ===============================
+# Jupyter
+# ===============================
+.ipynb_checkpoints
+
+# ===============================
+# Testing
+# ===============================
+.pytest_cache/
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+
+# ===============================
+# IDE
+# ===============================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===============================
+# OS Files
+# ===============================
+.DS_Store
+Thumbs.db
+
+# ===============================
+# Docker
+# ===============================
+*.pid
+*.seed
+*.pid.lock
+
+# ===============================
+# Streamlit
+# ===============================
+.streamlit/secrets.toml
+
+# ===============================
+# Node (if dashboard expands)
+# ===============================
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# ===============================
+# Misc
+# ===============================
+*.bak
+*.tmp
+*.temp

@@ -1,6 +1,6 @@
 
 
-# IntelliGrade-H 📝
+# Sathyabama IntelliGrade
 
 ### AI System for Automatic Evaluation of Handwritten Subjective Answers
 

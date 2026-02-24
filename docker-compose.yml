@@ -1,0 +1,67 @@
+version: "3.9"
+
+services:
+
+  # ──────────────────────────────────────────
+  # PostgreSQL Database
+  # ──────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: intelligrade_db
+    environment:
+      POSTGRES_USER: intelligrade
+      POSTGRES_PASSWORD: intelligrade_pass
+      POSTGRES_DB: intelligrade
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U intelligrade"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────
+  # FastAPI Backend
+  # ──────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: intelligrade_api
+    environment:
+      - DATABASE_URL=postgresql://intelligrade:intelligrade_pass@db:5432/intelligrade
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - UPLOAD_DIR=/app/uploads
+      - OCR_ENGINE=trocr
+      - LLM_WEIGHT=0.6
+      - SIMILARITY_WEIGHT=0.4
+    volumes:
+      - ./uploads:/app/uploads
+      - ./models:/app/models
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────
+  # Streamlit Frontend
+  # ──────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: intelligrade_ui
+    environment:
+      - API_BASE=http://backend:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
