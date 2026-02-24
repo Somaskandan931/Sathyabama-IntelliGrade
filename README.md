@@ -498,12 +498,3 @@ This project can evolve into:
 
 Department of Computer Science and Engineering
 Sathyabama Institute of Science and Technology
-
----
-
-If you want, I can also help you create:
-
-• A **GitHub README that can trend**
-• A **research-paper version of this project**
-• A **portfolio description that impresses recruiters**
-• A **demo video script**.
