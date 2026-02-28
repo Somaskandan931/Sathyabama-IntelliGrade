@@ -86,7 +86,7 @@ def evaluate_ocr(model_path: str, test_dir: str):
         pred_text = result.text
 
         # Character Error Rate
-        from Levenshtein import editops
+        from e import editops
         try:
             import Levenshtein
             cer = Levenshtein.distance(pred_text, gt_text) / max(len(gt_text), 1)
