@@ -1,7 +1,6 @@
 # ── Web Framework ─────────────────────────────────────────────────────────────
-# fastapi 0.109.x ships WITHOUT fastapi-cli, so no typer conflict with spacy
 fastapi==0.109.2
-uvicorn==0.27.1
+uvicorn[standard]==0.27.1
 python-multipart==0.0.9
 
 # ── Machine Learning ──────────────────────────────────────────────────────────
@@ -9,14 +8,19 @@ torch==2.3.0
 transformers==4.41.2
 safetensors>=0.4.1
 sentence-transformers==3.0.0
+accelerate==0.31.0
 
-# ── OCR ───────────────────────────────────────────────────────────────────────
-pytesseract==0.3.10
+# ── OCR — NO TESSERACT REQUIRED ───────────────────────────────────────────────
+# EasyOCR: primary OCR engine, CPU/GPU, good handwriting, no system deps
+easyocr==1.7.1
+# pdf2image: converts PDF pages to PIL Images for OCR (needs poppler)
 pdf2image==1.17.0
+# Poppler (Windows): pip install pdf2image then install poppler from:
+#   https://github.com/oschwartz10612/poppler-windows/releases
+#   Extract and add bin\ folder to PATH
 PyMuPDF==1.24.5
 
 # ── NLP ───────────────────────────────────────────────────────────────────────
-# spacy 3.8.x is compatible with typer>=0.12 (no conflict with fastapi)
 spacy==3.8.2
 nltk==3.8.1
 pyspellchecker==0.8.1
@@ -26,16 +30,17 @@ opencv-python-headless==4.9.0.80
 Pillow==10.3.0
 
 # ── LLM / AI APIs ─────────────────────────────────────────────────────────────
+anthropic>=0.40.0
 google-generativeai==0.7.0
+groq==0.9.0
 
 # ── Database ──────────────────────────────────────────────────────────────────
 sqlalchemy==2.0.30
-# SQLite is used by default (no extra driver needed).
-# Uncomment for PostgreSQL in production:
-# psycopg2-binary==2.9.9
+alembic==1.13.1
 
 # ── API / Async ───────────────────────────────────────────────────────────────
 pydantic==2.7.3
+pydantic-settings==2.2.1
 httpx==0.27.0
 aiofiles==23.2.1
 python-dotenv==1.0.1
@@ -45,6 +50,12 @@ numpy==1.26.4
 scipy==1.13.1
 scikit-learn==1.5.0
 PyPDF2==3.0.1
+pandas==2.2.2
 
 # ── Frontend ──────────────────────────────────────────────────────────────────
 streamlit==1.35.0
+plotly==5.22.0
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest==8.2.1
+pytest-asyncio==0.23.7

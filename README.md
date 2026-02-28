@@ -1,73 +1,73 @@
+# Sathyabama IntelliGrade-H
 
+> **AI System for Automatic Evaluation of Handwritten Subjective Answers**
 
-# Sathyabama IntelliGrade
-
-### AI System for Automatic Evaluation of Handwritten Subjective Answers
-
-An intelligent grading system that reads handwritten student answers, understands them using NLP and large language models, and generates marks with detailed feedback.
-
-Developed for academic research and evaluation workflows at
-Sathyabama Institute of Science and Technology.
+An intelligent grading system that reads handwritten student answers, understands them using NLP and large language models, and generates marks with detailed feedback — built for academic research and evaluation workflows at **Sathyabama Institute of Science and Technology**.
 
 ---
 
-# Overview
+## Overview
 
-Evaluating subjective answers is time-consuming, inconsistent, and difficult to scale. IntelliGrade-H automates this process using modern AI techniques:
+Evaluating subjective answers is time-consuming, inconsistent, and difficult to scale. **IntelliGrade-H** automates this process using modern AI techniques:
 
-• Computer Vision for handwriting recognition
-• Natural Language Processing for answer understanding
-• Large Language Models for professor-like evaluation
-• Hybrid scoring algorithms for fair grading
+- **Computer Vision** for handwriting recognition (TrOCR)
+- **Natural Language Processing** for answer understanding (spaCy, NLTK)
+- **Large Language Models** for professor-like evaluation (Gemini)
+- **Hybrid Scoring Algorithms** for fair, calibrated grading
 
-The system converts handwritten answers into structured feedback and marks in seconds.
-
----
-
-# Key Features
-
-• Handwritten answer recognition
-• AI-based grading using LLMs
-• Semantic similarity scoring
-• Rubric-aware evaluation
-• Detailed student feedback
-• Teacher dashboard for batch grading
-• API-based architecture for LMS integration
+The system converts handwritten answers into structured feedback and marks **in seconds**, supporting both MCQ and open-ended subjective questions.
 
 ---
 
-# Project Structure
+## Key Features
+
+| Feature | Description |
+|---|---|
+| Handwriting Recognition | TrOCR transformer + Tesseract fallback |
+| LLM Grading | Professor-style evaluation via Gemini |
+| Semantic Similarity | Sentence-BERT cosine scoring |
+| Rubric-Aware Evaluation | Zero-shot DeBERTa NLI rubric checking |
+| Detailed Feedback | Strengths, missing concepts, suggestions |
+| Teacher Dashboard | Streamlit UI for batch grading and analytics |
+| REST API | FastAPI backend for LMS integration |
+| Metrics Tracking | MAE, Pearson r, Cohen's Kappa, accuracy reporting |
+| Docker Ready | One-command deployment |
+
+---
+
+## Project Structure
 
 ```
 IntelliGrade-H/
 │
 ├── backend/
-│   ├── api.py
-│   ├── preprocessor.py
-│   ├── ocr_module.py
-│   ├── text_processor.py
-│   ├── similarity.py
-│   ├── llm_evaluator.py
-│   ├── rubric_matcher.py
-│   ├── evaluator.py
-│   ├── metrics.py
-│   └── database.py
+│   ├── api.py                  # FastAPI REST endpoints
+│   ├── evaluator.py            # Core orchestration engine
+│   ├── ocr_module.py           # TrOCR + Tesseract OCR
+│   ├── preprocessor.py         # OpenCV image preprocessing
+│   ├── text_processor.py       # Spell correction, tokenization
+│   ├── similarity.py           # Sentence-BERT similarity
+│   ├── llm_evaluator.py        # Gemini LLM evaluation
+│   ├── rubric_matcher.py       # DeBERTa NLI rubric checking
+│   ├── question_classifier.py  # Auto question-type detection
+│   ├── metrics.py              # MAE, Kappa, Pearson metrics
+│   ├── evaluation_prompts.py   # LLM prompt templates
+│   └── database.py             # SQLAlchemy ORM models
 │
 ├── frontend/
-│   └── dashboard.py
+│   └── dashboard.py            # Streamlit teacher dashboard
 │
 ├── models/
-│   └── train_trocr.py
+│   └── train_trocr.py          # TrOCR fine-tuning script
 │
 ├── datasets/
-│   └── collect_dataset.py
-│
-├── prompts/
-│   └── evaluation_prompts.py
+│   └── collect_dataset.py      # Dataset collection & labeling tool
 │
 ├── tests/
-│   └── test_all.py
+│   └── test_all.py             # Full test suite (pytest)
 │
+├── uploads/                    # Student answer images (auto-created)
+├── .env                        # Environment variables (see Configuration)
 ├── requirements.txt
 ├── docker-compose.yml
 └── README.md
@@ -75,426 +75,441 @@ IntelliGrade-H/
 
 ---
 
-# System Architecture
+## System Architecture
 
 ```
 Student Answer Image
         │
         ▼
-Image Preprocessing
-(OpenCV pipeline)
+┌─────────────────────┐
+│  Image Preprocessing │  ← grayscale, denoise, deskew, CLAHE, Otsu
+│  (OpenCV pipeline)   │
+└─────────────────────┘
         │
         ▼
-Handwriting Recognition
-(TrOCR / Tesseract)
+┌─────────────────────┐
+│ Handwriting  (OCR)  │  ← TrOCR (primary) / Tesseract (fallback)
+└─────────────────────┘
         │
         ▼
-Text Processing
-(spaCy / NLTK)
+┌─────────────────────┐
+│   Text Processing   │  ← spell correction, normalization, tokenization
+└─────────────────────┘
         │
         ▼
-AI Evaluation Engine
- ┌───────────────────────────────┐
- │ Semantic Similarity (SBERT)   │
- │ LLM Examiner (Gemini)         │
- │ Rubric Matcher (DeBERTa NLI)  │
- └───────────────────────────────┘
+┌────────────────────────────────────────┐
+│          AI Evaluation Engine          │
+│  ┌──────────────────────────────────┐  │
+│  │  Semantic Similarity (SBERT)     │  │
+│  │  LLM Examiner (Gemini Flash)     │  │
+│  │  Rubric Matcher (DeBERTa NLI)    │  │
+│  └──────────────────────────────────┘  │
+└────────────────────────────────────────┘
         │
         ▼
-Hybrid Score Calculation
+┌─────────────────────────────────────────┐
+│  Hybrid Score = 0.6 × LLM Score         │
+│               + 0.4 × Similarity × Max  │
+└─────────────────────────────────────────┘
         │
         ▼
-Results + Feedback Dashboard
+Results + Feedback → Dashboard / API Response
 ```
 
 ---
 
-# Components
+## Components
 
-## Image Preprocessing
+### Image Preprocessing — `backend/preprocessor.py`
 
-File: `backend/preprocessor.py`
+Prepares raw scanned images for accurate OCR:
 
-Pipeline:
+1. Grayscale conversion
+2. Noise removal (`fastNlMeansDenoising`)
+3. Deskew correction (Hough line transform)
+4. CLAHE contrast enhancement
+5. Otsu binarization
+6. Line segmentation for multi-line answers
 
-• Grayscale conversion
-• Noise removal
-• Deskew correction
-• CLAHE contrast enhancement
-• Otsu thresholding
-• Line segmentation
+### OCR Engine — `backend/ocr_module.py`
 
-Improves OCR accuracy significantly.
+| Engine | Use Case |
+|---|---|
+| **TrOCR** (Microsoft) | Primary — transformer-based handwriting recognition |
+| **Tesseract** | Fallback — rule-based OCR |
 
----
+Supports JPEG, PNG, and multi-page PDF inputs. Confidence scores returned for every extraction.
 
-# OCR Engine
+### Text Processing — `backend/text_processor.py`
 
-File: `backend/ocr_module.py`
+- Spell correction (pyspellchecker with academic vocabulary)
+- Sentence segmentation via spaCy
+- Stopword removal and lemmatization
+- Normalization of OCR noise and punctuation artifacts
 
-Supports two engines:
+### Semantic Similarity — `backend/similarity.py`
 
-Primary
-Microsoft TrOCR (Transformer-based)
+Uses **Sentence-BERT** (`all-MiniLM-L6-v2`) to compute cosine similarity between student and teacher answers. Features:
+- Overall answer similarity (0.0 – 1.0 scale)
+- Sentence-level analysis with best-match highlighting
+- Fine-tuning support on domain-specific QA pairs
 
-Fallback
-Tesseract OCR
+### LLM Evaluation — `backend/llm_evaluator.py`
 
-Capabilities
+Routes evaluation to the correct prompt based on question type:
 
-• Handwriting recognition
-• PDF support
-• Confidence scoring
-• Fine-tuning support
+| Question Type | Evaluation Method |
+|---|---|
+| `open_ended` | Full STANDARD / CS / RUBRIC / STRICT prompt |
+| `short_answer` | Concise factual accuracy check |
+| `fill_blank` | Exact / near-exact match with OCR tolerance |
+| `numerical` | Method + answer with configurable tolerance |
+| `diagram` | OCR label extraction + description matching |
+| `mcq` | Deterministic (no LLM call needed) |
+| `true_false` | Deterministic (no LLM call needed) |
 
----
+Output is structured JSON: `score`, `confidence`, `strengths`, `missing_concepts`, `feedback`.
 
-# Text Processing
+### Rubric Matching — `backend/rubric_matcher.py`
 
-File: `backend/text_processor.py`
+Uses **DeBERTa NLI** zero-shot classification to check whether each rubric criterion is addressed in the student's answer — no training required. Works for any subject.
 
-Tasks performed:
+Example rubric criteria:
+- "Definition of machine learning" (2 marks)
+- "Supervised vs unsupervised example" (1.5 marks)
+- "Real-world application" (1 mark)
 
-• Spell correction with academic vocabulary
-• Sentence segmentation
-• Tokenization
-• Normalization
+### Question Classifier — `backend/question_classifier.py`
 
-Libraries used:
+Auto-detects question type using LLM + regex fallback. Supported types:
 
-spaCy
-NLTK
+`mcq` · `true_false` · `fill_blank` · `short_answer` · `open_ended` · `numerical` · `diagram`
 
----
+Pass `question_type="auto"` to the API to enable this.
 
-# Semantic Similarity
+### Metrics — `backend/metrics.py`
 
-File: `backend/similarity.py`
+Validates AI scoring accuracy against teacher ground truth:
 
-Uses Sentence-BERT to measure how close a student answer is to the teacher answer.
+| Metric | Applies To |
+|---|---|
+| MAE (Mean Absolute Error) | Open-ended |
+| Pearson Correlation | Open-ended |
+| Cohen's Kappa (linear weighted) | Open-ended |
+| Accuracy within ±1 mark | Open-ended |
+| Accuracy within ±0.5 marks | Open-ended |
+| MCQ Accuracy % | MCQ |
 
-Features:
-
-• Cosine similarity scoring
-• Sentence-level analysis
-• Fine-tuning capability
-
-Model used:
-
-all-MiniLM-L6-v2.
-
----
-
-# LLM Evaluation
-
-File: `backend/llm_evaluator.py`
-
-Uses:
-
-Gemini API
-
-The model evaluates answers like a university professor.
-
-Outputs:
-
-• Marks
-• Strengths
-• Missing concepts
-• Improvement suggestions
-
-Responses are parsed into structured JSON.
+Metrics are **recomputed in the background** after every `/evaluate` call and exposed at `GET /metrics`.
 
 ---
 
-# Rubric Matching
+## API Reference
 
-File: `backend/rubric_matcher.py`
+Built with **FastAPI**. Interactive docs available at `http://localhost:8000/docs`.
 
-Uses zero-shot classification with DeBERTa NLI.
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/` | API info and available endpoints |
+| `GET` | `/health` | Service health check |
+| `POST` | `/upload` | Upload student answer image or PDF |
+| `POST` | `/ocr/{id}` | Run OCR only on a submission |
+| `POST` | `/evaluate` | Full AI evaluation pipeline |
+| `GET` | `/result/{id}` | Fetch evaluation result |
+| `POST` | `/rubric` | Upload rubric criteria for a question |
+| `GET` | `/stats` | System-wide statistics |
+| `GET` | `/metrics` | AI scoring accuracy metrics (background-updated) |
+| `GET` | `/metrics/compute` | Ad-hoc metric computation from score lists |
+| `GET` | `/submissions` | List all submissions with results |
 
-Benefits:
+### Example: Evaluate a Submission
 
-• No training required
-• Detects rubric coverage
-• Works for any subject
+```bash
+# Step 1 — Upload image
+curl -X POST http://localhost:8000/upload \
+  -F "file=@answer.jpg" \
+  -F "student_code=STU001"
 
-Example rubric:
-
-Definition
-Explanation
-Example
-Applications.
-
----
-
-# Evaluation Engine
-
-File: `backend/evaluator.py`
-
-This is the core orchestration module.
-
-Responsibilities:
-
-• Runs the full pipeline
-• Aggregates outputs from all models
-• Calculates final score
-• Generates feedback
-
-Scoring formula
-
-```
-Final Score =
-0.6 × LLM Score
-+
-0.4 × Similarity × Max Marks
+# Step 2 — Evaluate (returns JSON result instantly)
+curl -X POST http://localhost:8000/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "submission_id": 1,
+    "question": "Explain gradient descent in machine learning.",
+    "question_type": "open_ended",
+    "teacher_answer": "Gradient descent is an optimization algorithm...",
+    "max_marks": 10,
+    "rubric_criteria": [
+      {"criterion": "definition of gradient descent", "marks": 3},
+      {"criterion": "role of learning rate", "marks": 3},
+      {"criterion": "convergence explanation", "marks": 4}
+    ]
+  }'
 ```
 
----
+### Example: MCQ Evaluation
 
-# API Layer
-
-File: `backend/api.py`
-
-Built with FastAPI.
-
-Endpoints
-
-| Method | Endpoint     | Purpose               |
-| ------ | ------------ | --------------------- |
-| POST   | /upload      | Upload student answer |
-| POST   | /ocr/{id}    | Run OCR               |
-| POST   | /evaluate    | Full AI evaluation    |
-| GET    | /result/{id} | Fetch result          |
-| POST   | /rubric      | Upload grading rubric |
-| GET    | /stats       | System analytics      |
-| GET    | /health      | Service health check  |
-
-Interactive docs available at `/docs`.
-
----
-
-# Database
-
-File: `backend/database.py`
-
-ORM: SQLAlchemy.
-
-Tables:
-
-Students
-Questions
-Submissions
-Results
-Rubrics
-
-Supports SQLite (development) and PostgreSQL (production).
-
----
-
-# Teacher Dashboard
-
-File: `frontend/dashboard.py`
-
-Built using Streamlit.
-
-Features:
-
-Single evaluation
-Batch evaluation
-Result analytics
-Settings configuration
-
----
-
-# Dataset Tools
-
-File: `datasets/collect_dataset.py`
-
-Includes:
-
-• Labeling interface
-• Synthetic dataset generator
-• Dataset statistics
-• Export for OCR training
-
-Useful for bootstrapping when real data is limited.
-
----
-
-# Fine-Tuning TrOCR
-
-```
-python models/train_trocr.py train \
-  --dataset datasets/training \
-  --output models/trocr-finetuned \
-  --epochs 5
+```bash
+curl -X POST http://localhost:8000/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "submission_id": 2,
+    "question": "Which algorithm uses backpropagation?",
+    "question_type": "mcq",
+    "correct_option": "B",
+    "max_marks": 1,
+    "mcq_options": {
+      "A": "K-Means",
+      "B": "Neural Network",
+      "C": "Decision Tree",
+      "D": "Naive Bayes"
+    }
+  }'
 ```
 
-Evaluation:
+### Example: Ad-hoc Metrics
 
+```bash
+# Compute metrics from score lists directly (no DB needed)
+curl "http://localhost:8000/metrics/compute?ai_scores=7.5,8,6,9&teacher_scores=8,7.5,6.5,9&max_marks=10"
 ```
-python models/train_trocr.py eval
-```
-
-Metric used:
-
-Character Error Rate (CER).
 
 ---
 
-# Installation
+## Installation
 
-### Clone Repository
+### Prerequisites
 
-```
-git clone <repo>
+- Python 3.9+
+- Node.js 16+ (for docx generation, optional)
+- Tesseract OCR (`apt install tesseract-ocr` on Linux)
+- A Gemini API key from [https://aistudio.google.com](https://aistudio.google.com)
+
+### Clone and Install
+
+```bash
+git clone https://github.com/your-org/IntelliGrade-H.git
 cd IntelliGrade-H
-```
 
-Install dependencies
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate        # Linux / macOS
+# venv\Scripts\activate         # Windows
 
-```
+# Install Python dependencies
 pip install -r requirements.txt
+
+# Download spaCy language model
 python -m spacy download en_core_web_sm
 ```
 
 ---
 
-# Environment Setup
+## Configuration
 
-Create `.env`
+Create a `.env` file in the project root:
 
-```
-GEMINI_API_KEY=your_key
+```env
+# Required
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# Database (SQLite for dev, PostgreSQL for prod)
 DATABASE_URL=sqlite:///./intelligrade.db
+# DATABASE_URL=postgresql://user:password@localhost:5432/intelligrade
+
+# OCR Engine: "trocr" | "tesseract" | "ensemble"
 OCR_ENGINE=trocr
+
+# Scoring weights (must sum to 1.0)
 LLM_WEIGHT=0.6
 SIMILARITY_WEIGHT=0.4
+
+# File upload settings
 UPLOAD_DIR=./uploads
+MAX_FILE_SIZE_MB=20
 ```
 
-Get Gemini key from
-[https://aistudio.google.com](https://aistudio.google.com)
+Get your free Gemini API key at: [https://aistudio.google.com](https://aistudio.google.com)
 
 ---
 
-# Run Backend
+## Running the System
 
-```
+### Backend API
+
+```bash
 uvicorn backend.api:app --reload
+
+# API running at:  http://localhost:8000
+# Swagger UI at:   http://localhost:8000/docs
+# ReDoc at:        http://localhost:8000/redoc
 ```
 
-Open:
+### Teacher Dashboard
 
+```bash
+streamlit run frontend/dashboard.py
+
+# Dashboard running at: http://localhost:8501
 ```
-http://localhost:8000/docs
-```
 
----
+### Both together (recommended)
 
-# Run Dashboard
+```bash
+# Terminal 1
+uvicorn backend.api:app --reload
 
-```
+# Terminal 2
 streamlit run frontend/dashboard.py
 ```
 
-Open:
+---
 
+## Evaluation Metrics
+
+The system continuously validates AI grading accuracy against teacher ground truth. Access results at `GET /metrics`.
+
+| Metric | Target | Description |
+|---|---|---|
+| Mean Absolute Error | < 1.0 mark | Average scoring deviation |
+| Pearson Correlation | > 0.80 | Linear correlation with teacher grades |
+| Cohen's Kappa | > 0.70 | Inter-rater agreement (chance-corrected) |
+| Accuracy ±1 mark | > 85% | % of grades within 1 mark of teacher |
+| Accuracy ±0.5 marks | > 70% | % of grades within 0.5 marks of teacher |
+| MCQ Accuracy | > 95% | Exact match for multiple-choice |
+
+> **Note:** Open-ended MAE and Kappa metrics require teacher ground-truth scores stored in the database. For best results, have teachers review and confirm AI grades — their scores are then used for ongoing calibration.
+
+---
+
+## Fine-Tuning TrOCR
+
+### Step 1 — Collect Dataset
+
+```bash
+# Add labeled samples
+python datasets/collect_dataset.py add --image sample.jpg --text "The answer is 42"
+
+# Generate synthetic samples for bootstrapping
+python datasets/collect_dataset.py synthetic --n 500
+
+# Check dataset statistics
+python datasets/collect_dataset.py review
+
+# Export train/val split (80/20)
+python datasets/collect_dataset.py export
 ```
-http://localhost:8501
+
+### Step 2 — Train
+
+```bash
+python models/train_trocr.py train \
+  --dataset datasets/training \
+  --output models/trocr-finetuned \
+  --epochs 5 \
+  --batch-size 8
+```
+
+### Step 3 — Evaluate
+
+```bash
+python models/train_trocr.py eval \
+  --model models/trocr-finetuned \
+  --test-dir datasets/training/val
+```
+
+Metric used: **Character Error Rate (CER)**. A CER below 0.05 (5%) is considered production-ready.
+
+### Step 4 — Use Fine-Tuned Model
+
+Update `.env`:
+
+```env
+OCR_ENGINE=trocr
+TROCR_MODEL_PATH=./models/trocr-finetuned
 ```
 
 ---
 
-# Running Tests
+## Docker Deployment
 
-```
-pytest tests/
-```
-
-Includes tests for:
-
-OCR
-Similarity
-API endpoints
-Evaluation pipeline.
-
----
-
-# Docker Deployment
-
-```
+```bash
+# Build and start all services
 docker-compose up --build
+
+# Services started:
+#   API Server   →  http://localhost:8000
+#   Dashboard    →  http://localhost:8501
+#   Database     →  PostgreSQL (internal)
 ```
 
-Services started:
-
-API server
-Database
-Dashboard.
+For production, update `docker-compose.yml` to set `GEMINI_API_KEY` and `DATABASE_URL` as environment secrets rather than in plain text.
 
 ---
 
-# Evaluation Metrics
+## Running Tests
 
-System accuracy is validated against teacher grading.
+```bash
+# Run full test suite
+pytest tests/ -v
 
-| Metric              | Target   |
-| ------------------- | -------- |
-| Mean Absolute Error | < 1 mark |
-| Pearson Correlation | > 0.80   |
-| Cohen’s Kappa       | > 0.70   |
-| Accuracy ±1 mark    | > 85%    |
+# Run with coverage report
+pytest tests/ --cov=backend --cov-report=html
 
----
+# Run specific test module
+pytest tests/test_all.py::TestOCR -v
+```
 
-# Technology Stack
-
-| Layer           | Technology       |
-| --------------- | ---------------- |
-| OCR             | TrOCR, Tesseract |
-| NLP             | spaCy, NLTK      |
-| Embeddings      | Sentence-BERT    |
-| LLM             | Gemini           |
-| Rubric Matching | DeBERTa          |
-| Backend         | FastAPI          |
-| Frontend        | Streamlit        |
-| Database        | PostgreSQL       |
-| Deployment      | Docker           |
+Tests cover: OCR pipeline · Text processing · Similarity scoring · LLM evaluation · API endpoints · Rubric matching · Metrics computation.
 
 ---
 
-# Ethical Considerations
+## Technology Stack
 
-Student identities are anonymized.
-
-Data is processed locally except for LLM requests.
-
-AI grades must be validated by instructors before official use.
-
----
-
-# Future Improvements
-
-• Diagram recognition
-• Mathematical expression grading
-• Multilingual support (Tamil / Hindi / English)
-• Continuous learning from teacher corrections
-• LMS integrations
-
----
-
-# Research Potential
-
-This project can evolve into:
-
-• An academic publication
-• A startup-grade grading platform
-• A scalable assessment system for universities
+| Layer | Technology | Purpose |
+|---|---|---|
+| OCR | TrOCR (Microsoft), Tesseract | Handwriting recognition |
+| Image Processing | OpenCV, Pillow | Preprocessing pipeline |
+| NLP | spaCy, NLTK | Text processing |
+| Embeddings | Sentence-BERT | Semantic similarity |
+| LLM | Gemini 2.0 Flash | Answer evaluation |
+| Rubric Matching | DeBERTa (cross-encoder NLI) | Zero-shot criterion detection |
+| Question Classification | LLM + Regex | Auto question-type detection |
+| Backend | FastAPI, SQLAlchemy | REST API + ORM |
+| Frontend | Streamlit | Teacher dashboard |
+| Database | SQLite (dev) / PostgreSQL (prod) | Data persistence |
+| Deployment | Docker, docker-compose | Containerization |
+| Testing | pytest | Test suite |
 
 ---
 
-# Team
+## Ethical Considerations
 
-Department of Computer Science and Engineering
-Sathyabama Institute of Science and Technology
+- **Student privacy:** Identities are anonymized using student codes — no personally identifiable information is stored.
+- **Local processing:** All computation runs locally except LLM API calls to Gemini (which are stateless and not stored by the provider).
+- **Human oversight:** AI grades are advisory. Results must be reviewed and confirmed by instructors before official use.
+- **Fairness:** The system does not penalize OCR spelling errors — it evaluates conceptual understanding, not surface form.
+- **Transparency:** Every score includes reasoning, strengths, and missing concepts so students understand their grade.
+
+---
+
+## Future Improvements
+
+- Diagram and flowchart recognition (visual grading)
+- Mathematical expression evaluation (LaTeX parsing)
+- Multilingual support — Tamil, Hindi, and English
+- Continuous learning from teacher corrections (active learning loop)
+- Moodle / Google Classroom LMS integration
+- Offline mode (local LLM via Ollama)
+- Mobile app for scanning and submitting answers
+- PDF batch upload with per-page question mapping
+
+---
+
+## Research Potential
+
+IntelliGrade-H is designed to evolve into:
+
+- An **academic publication** on automated subjective answer evaluation
+- A **startup-grade grading platform** deployable across universities
+- A **scalable assessment infrastructure** for national-level examinations

@@ -1,14 +1,16 @@
 # IntelliGrade-H — Prompt Templates
-# These prompts are used by the LLM Evaluator (llm_evaluator.py)
-# You can customize them for your subject area.
+# Used by llm_evaluator.py for OPEN-ENDED questions.
+# MCQ grading is deterministic — no LLM prompt needed.
 
 # ─────────────────────────────────────────────────────────
-# STANDARD EVALUATION PROMPT
+# STANDARD OPEN-ENDED EVALUATION PROMPT
 # ─────────────────────────────────────────────────────────
 
 STANDARD_PROMPT = """
 You are an expert university professor at Sathyabama Institute of Science and Technology
 evaluating a student's handwritten answer.
+
+QUESTION TYPE: Open-Ended
 
 QUESTION:
 {question}
@@ -36,23 +38,58 @@ IMPORTANT:
 - If completely irrelevant, give 0
 
 Respond ONLY with valid JSON (no markdown):
-{
+{{
   "score": <float between 0 and MAX_MARKS>,
   "confidence": <float 0-1>,
   "strengths": [<list of strings>],
   "missing_concepts": [<list of strings>],
   "feedback": "<constructive paragraph>"
-}
+}}
 """
 
 
 # ─────────────────────────────────────────────────────────
-# ENGINEERING / COMPUTER SCIENCE PROMPT
-# (Subject-specific for CSE/ECE departments)
+# MCQ VALIDATION PROMPT (optional — for borderline OCR cases)
+# Normally MCQ is graded deterministically without an LLM call.
+# This prompt can be used when OCR confidence is very low and
+# you want the LLM to re-interpret the student's marked answer.
+# ─────────────────────────────────────────────────────────
+
+MCQ_VALIDATION_PROMPT = """
+You are helping grade a multiple-choice question.
+The student's handwritten answer sheet was scanned and processed by OCR.
+
+QUESTION:
+{question}
+
+OPTIONS:
+A) {option_a}
+B) {option_b}
+C) {option_c}
+D) {option_d}
+
+OCR EXTRACTED TEXT FROM STUDENT SHEET:
+{student_answer}
+
+TASK:
+Based on the OCR text, determine which single option (A, B, C, or D) the student selected.
+Consider common handwriting patterns: circling a letter, writing it standalone, crossing out others.
+
+Respond ONLY with valid JSON (no markdown):
+{{
+  "detected_option": "<single letter: A, B, C, or D, or null if unclear>",
+  "confidence": <float 0-1>,
+  "reasoning": "<brief explanation of what you saw>"
+}}
+"""
+
+
+# ─────────────────────────────────────────────────────────
+# ENGINEERING / COMPUTER SCIENCE PROMPT (open-ended)
 # ─────────────────────────────────────────────────────────
 
 CS_ENGINEERING_PROMPT = """
-You are a Computer Science professor evaluating a student's answer.
+You are a Computer Science professor evaluating a student's open-ended answer.
 
 Technical subjects may include:
 - Data Structures, Algorithms
@@ -84,23 +121,22 @@ Evaluate for:
 6. Real-world applications
 
 Respond ONLY with valid JSON:
-{
+{{
   "score": <float 0 to MAX_MARKS>,
   "confidence": <float 0-1>,
   "strengths": [<technical strengths as strings>],
   "missing_concepts": [<missing technical concepts as strings>],
   "feedback": "<actionable technical feedback for the student>"
-}
+}}
 """
 
 
 # ─────────────────────────────────────────────────────────
-# RUBRIC-BASED PROMPT
-# (When detailed rubric is provided)
+# RUBRIC-BASED PROMPT (open-ended)
 # ─────────────────────────────────────────────────────────
 
 RUBRIC_PROMPT = """
-You are a professor evaluating a student's answer against a detailed rubric.
+You are a professor evaluating a student's open-ended answer against a detailed rubric.
 
 QUESTION:
 {question}
@@ -122,26 +158,27 @@ Instructions:
 - Do NOT exceed {max_marks}
 
 Respond ONLY with valid JSON:
-{
+{{
   "score": <total float score, max {max_marks}>,
   "confidence": <float 0-1>,
-  "rubric_breakdown": {
-    "<criterion_name>": {"awarded": <float>, "max": <float>, "reason": "<brief reason>"}
-  },
+  "rubric_breakdown": {{
+    "<criterion_name>": {{"awarded": <float>, "max": <float>, "reason": "<brief reason>"}}
+  }},
   "strengths": [<strings>],
   "missing_concepts": [<strings>],
   "feedback": "<paragraph>"
-}
+}}
 """
 
 
 # ─────────────────────────────────────────────────────────
-# STRICT EXAMINER PROMPT
-# (For high-stakes exams — more rigorous)
+# STRICT EXAMINER PROMPT (open-ended, high-stakes)
 # ─────────────────────────────────────────────────────────
 
 STRICT_PROMPT = """
 You are a strict but fair university examiner at a premier technical institution.
+
+QUESTION TYPE: Open-Ended
 
 QUESTION:
 {question}
@@ -165,11 +202,11 @@ Marking guidelines:
 Be strict. Students in an engineering course must demonstrate clear understanding.
 
 Respond ONLY with valid JSON:
-{
+{{
   "score": <float>,
   "confidence": <float 0-1>,
   "strengths": [<strings>],
   "missing_concepts": [<strings>],
   "feedback": "<constructive feedback>"
-}
+}}
 """

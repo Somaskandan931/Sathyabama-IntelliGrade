@@ -1,30 +1,65 @@
 """
 IntelliGrade-H - Model Fine-tuning Script
 Fine-tunes TrOCR on your collected handwriting dataset.
-Run: python models/train_trocr.py --dataset datasets/training --output models/trocr-finetuned
+
+Usage:
+  python models/train_trocr.py train --dataset datasets/training --output models/trocr-finetuned
+  python models/train_trocr.py eval  --model models/trocr-finetuned --test-dir datasets/training/val
 """
+
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 import argparse
 import logging
+import numpy as np
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("train_trocr")
 
 
+# ─────────────────────────────────────────────────────────
+# CER helper — no broken third-party imports
+# ─────────────────────────────────────────────────────────
+
+def _compute_cer(pred: str, gt: str) -> float:
+    """Character Error Rate via Levenshtein distance (pure Python fallback)."""
+    if not gt:
+        return 0.0 if not pred else 1.0
+    try:
+        import Levenshtein
+        return Levenshtein.distance(pred, gt) / len(gt)
+    except ImportError:
+        pass
+    # Pure-Python edit distance
+    m, n = len(pred), len(gt)
+    dp = list(range(n + 1))
+    for i in range(1, m + 1):
+        prev, dp[0] = dp[0], i
+        for j in range(1, n + 1):
+            temp = dp[j]
+            dp[j] = prev if pred[i - 1] == gt[j - 1] else 1 + min(prev, dp[j], dp[j - 1])
+            prev = temp
+    return dp[n] / len(gt)
+
+
+# ─────────────────────────────────────────────────────────
+# train
+# ─────────────────────────────────────────────────────────
+
 def train(dataset_path: str, output_dir: str, epochs: int, batch_size: int):
-    """Run TrOCR fine-tuning on a labeled handwriting dataset."""
     dataset_path = Path(dataset_path)
-    output_dir = Path(output_dir)
+    output_dir   = Path(output_dir)
 
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset not found: {dataset_path}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Count samples
     train_labels = dataset_path / "train" / "labels.txt"
-    val_labels = dataset_path / "val" / "labels.txt"
+    val_labels   = dataset_path / "val"   / "labels.txt"
 
     if not train_labels.exists():
         raise FileNotFoundError(
@@ -36,34 +71,29 @@ def train(dataset_path: str, output_dir: str, epochs: int, batch_size: int):
     with open(val_labels) as f:
         n_val = sum(1 for l in f if l.strip())
 
-    logger.info(f"Training samples: {n_train}")
-    logger.info(f"Validation samples: {n_val}")
-    logger.info(f"Epochs: {epochs}, Batch size: {batch_size}")
-    logger.info(f"Output directory: {output_dir}")
+    logger.info("Training samples : %d", n_train)
+    logger.info("Validation samples: %d", n_val)
+    logger.info("Epochs: %d  Batch size: %d", epochs, batch_size)
 
     from backend.ocr_module import TrOCREngine
-    engine = TrOCREngine()
-    engine.fine_tune(
+    TrOCREngine().fine_tune(
         dataset_path=str(dataset_path / "train"),
         output_dir=str(output_dir),
         epochs=epochs,
-        batch_size=batch_size
+        batch_size=batch_size,
     )
+    logger.info("Fine-tuning complete! Model saved to: %s", output_dir)
 
-    logger.info("✅ Fine-tuning complete!")
-    logger.info(f"Model saved to: {output_dir}")
-    logger.info("Update OCR_ENGINE=trocr and set trocr_model_path in your .env to use this model.")
 
+# ─────────────────────────────────────────────────────────
+# eval
+# ─────────────────────────────────────────────────────────
 
 def evaluate_ocr(model_path: str, test_dir: str):
-    """Evaluate OCR accuracy on a test set."""
     from backend.ocr_module import OCRModule
-    from PIL import Image
-    import numpy as np
 
     ocr = OCRModule(engine="trocr", trocr_model_path=model_path)
-
-    test_dir = Path(test_dir)
+    test_dir    = Path(test_dir)
     labels_file = test_dir / "labels.txt"
 
     if not labels_file.exists():
@@ -71,60 +101,47 @@ def evaluate_ocr(model_path: str, test_dir: str):
         return
 
     with open(labels_file, encoding="utf-8") as f:
-        samples = [l.strip().split('\t') for l in f if '\t' in l]
+        samples = [l.strip().split("\t") for l in f if "\t" in l]
 
-    correct_chars = 0
-    total_chars = 0
     cer_scores = []
-
     for filename, gt_text in samples:
         img_path = test_dir / "images" / filename
         if not img_path.exists():
             continue
-
-        result = ocr.extract_text(str(img_path), use_line_segmentation=False)
-        pred_text = result.text
-
-        # Character Error Rate
-        from e import editops
-        try:
-            import Levenshtein
-            cer = Levenshtein.distance(pred_text, gt_text) / max(len(gt_text), 1)
-        except ImportError:
-            # fallback simple CER
-            cer = abs(len(pred_text) - len(gt_text)) / max(len(gt_text), 1)
-
+        pred_text = ocr.extract_text(str(img_path), use_line_segmentation=False).text
+        cer = _compute_cer(pred_text, gt_text)
         cer_scores.append(cer)
-        logger.info(f"{filename}: CER={cer:.3f} | GT='{gt_text[:40]}' | Pred='{pred_text[:40]}'")
+        logger.info(
+            "%s: CER=%.3f | GT='%s' | Pred='%s'",
+            filename, cer, gt_text[:40], pred_text[:40],
+        )
 
-    avg_cer = np.mean(cer_scores) if cer_scores else 1.0
-    logger.info(f"\n{'=' * 40}")
-    logger.info(f"Average Character Error Rate (CER): {avg_cer:.4f}")
-    logger.info(f"Accuracy (1 - CER): {(1 - avg_cer) * 100:.2f}%")
-    logger.info(f"Samples evaluated: {len(cer_scores)}")
-    logger.info(f"{'=' * 40}")
+    avg_cer = float(np.mean(cer_scores)) if cer_scores else 1.0
+    logger.info("=" * 40)
+    logger.info("Avg CER: %.4f  |  Accuracy: %.2f%%  |  Samples: %d",
+                avg_cer, (1 - avg_cer) * 100, len(cer_scores))
+    logger.info("=" * 40)
 
+
+# ─────────────────────────────────────────────────────────
+# CLI
+# ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="IntelliGrade-H TrOCR Fine-tuning")
-    subparsers = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers(dest="command")
 
-    # train command
-    train_parser = subparsers.add_parser("train", help="Fine-tune TrOCR")
-    train_parser.add_argument("--dataset", default="datasets/training",
-                               help="Path to dataset (with train/ and val/ subdirs)")
-    train_parser.add_argument("--output", default="models/trocr-finetuned",
-                               help="Output directory for fine-tuned model")
-    train_parser.add_argument("--epochs", type=int, default=5)
-    train_parser.add_argument("--batch-size", type=int, default=8)
+    tp = sub.add_parser("train", help="Fine-tune TrOCR")
+    tp.add_argument("--dataset",    default="datasets/training")
+    tp.add_argument("--output",     default="models/trocr-finetuned")
+    tp.add_argument("--epochs",     type=int, default=5)
+    tp.add_argument("--batch-size", type=int, default=8)
 
-    # eval command
-    eval_parser = subparsers.add_parser("eval", help="Evaluate OCR accuracy")
-    eval_parser.add_argument("--model", required=True, help="Path to fine-tuned model")
-    eval_parser.add_argument("--test-dir", required=True, help="Path to test set directory")
+    ep = sub.add_parser("eval", help="Evaluate OCR accuracy")
+    ep.add_argument("--model",    required=True)
+    ep.add_argument("--test-dir", required=True)
 
     args = parser.parse_args()
-
     if args.command == "train":
         train(args.dataset, args.output, args.epochs, args.batch_size)
     elif args.command == "eval":

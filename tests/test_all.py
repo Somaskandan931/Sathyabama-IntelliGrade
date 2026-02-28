@@ -1,6 +1,7 @@
 """
 IntelliGrade-H - Test Suite
 Unit and integration tests for all system components.
+Covers both MCQ and open-ended question workflows.
 """
 
 import sys
@@ -42,6 +43,113 @@ class TestImagePreprocessor(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────
+# MCQ Answer Extraction Tests
+# ─────────────────────────────────────────────────────────
+
+class TestMCQAnswerExtraction(unittest.TestCase):
+    """Tests for the OCR-based MCQ answer extractor."""
+
+    def _extract(self, text):
+        from backend.evaluator import _extract_mcq_answer
+        return _extract_mcq_answer(text)
+
+    def test_standalone_letter(self):
+        self.assertEqual(self._extract("B"), "B")
+
+    def test_bracketed_letter(self):
+        self.assertEqual(self._extract("(C)"), "C")
+
+    def test_answer_prefix(self):
+        self.assertEqual(self._extract("Answer: D"), "D")
+
+    def test_ans_prefix(self):
+        self.assertEqual(self._extract("Ans: A"), "A")
+
+    def test_option_prefix(self):
+        self.assertEqual(self._extract("Option B"), "B")
+
+    def test_lowercase_normalized(self):
+        self.assertEqual(self._extract("b)"), "B")
+
+    def test_noise_around_letter(self):
+        # OCR noise with the selected letter
+        self.assertEqual(self._extract("The answer is B."), "B")
+
+    def test_unclear_returns_none(self):
+        result = self._extract("I don't know the answer.")
+        # May return None or a stray letter — just ensure no crash
+        self.assertIn(result, (None, "A", "B", "C", "D", "E"))
+
+    def test_checkmark_prefix(self):
+        self.assertEqual(self._extract("✓C"), "C")
+
+
+# ─────────────────────────────────────────────────────────
+# MCQ Evaluation Engine Tests
+# ─────────────────────────────────────────────────────────
+
+class TestMCQEvaluation(unittest.TestCase):
+
+    def _make_engine(self):
+        from backend.evaluator import EvaluationEngine, QuestionType
+        with patch.object(EvaluationEngine, "__init__", lambda self, **kwargs: None):
+            engine = EvaluationEngine()
+            engine.LLM_WEIGHT = 0.6
+            engine.SIM_WEIGHT = 0.4
+        return engine
+
+    def test_correct_mcq_gives_full_marks(self):
+        from backend.evaluator import EvaluationEngine, QuestionType
+        from backend.ocr_module import OCRResult
+
+        engine = self._make_engine()
+        ocr    = OCRResult(text="B", confidence=0.95, engine="trocr")
+        result = engine._evaluate_mcq(
+            raw_text="B",
+            ocr_result=ocr,
+            correct_option="B",
+            max_marks=2.0,
+            start=0.0,
+        )
+        self.assertEqual(result.final_score, 2.0)
+        self.assertTrue(result.mcq_correct)
+        self.assertEqual(result.mcq_detected_answer, "B")
+
+    def test_wrong_mcq_gives_zero(self):
+        from backend.evaluator import EvaluationEngine, QuestionType
+        from backend.ocr_module import OCRResult
+
+        engine = self._make_engine()
+        ocr    = OCRResult(text="(A)", confidence=0.90, engine="trocr")
+        result = engine._evaluate_mcq(
+            raw_text="(A)",
+            ocr_result=ocr,
+            correct_option="C",
+            max_marks=2.0,
+            start=0.0,
+        )
+        self.assertEqual(result.final_score, 0.0)
+        self.assertFalse(result.mcq_correct)
+        self.assertEqual(result.mcq_detected_answer, "A")
+
+    def test_missing_correct_option_returns_empty(self):
+        from backend.evaluator import EvaluationEngine, QuestionType
+        from backend.ocr_module import OCRResult
+
+        engine = self._make_engine()
+        ocr    = OCRResult(text="B", confidence=0.9, engine="trocr")
+        result = engine._evaluate_mcq(
+            raw_text="B",
+            ocr_result=ocr,
+            correct_option=None,
+            max_marks=2.0,
+            start=0.0,
+        )
+        self.assertEqual(result.final_score, 0.0)
+        self.assertIn("not provided", result.feedback)
+
+
+# ─────────────────────────────────────────────────────────
 # Text Processor Tests
 # ─────────────────────────────────────────────────────────
 
@@ -52,13 +160,13 @@ class TestTextProcessor(unittest.TestCase):
         self.processor = TextProcessor()
 
     def test_normalize_removes_control_chars(self):
-        text = "Hello\x00World\x07test"
+        text   = "Hello\x00World\x07test"
         result = self.processor._normalize(text)
         self.assertNotIn("\x00", result)
         self.assertNotIn("\x07", result)
 
     def test_normalize_fixes_multiple_spaces(self):
-        text = "This  has   too    many spaces"
+        text   = "This  has   too    many spaces"
         result = self.processor._normalize(text)
         self.assertNotIn("  ", result)
 
@@ -74,7 +182,7 @@ class TestTextProcessor(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────
-# Similarity Model Tests
+# Similarity Model Tests (open-ended only)
 # ─────────────────────────────────────────────────────────
 
 class TestSemanticSimilarity(unittest.TestCase):
@@ -84,10 +192,6 @@ class TestSemanticSimilarity(unittest.TestCase):
         self.model = SemanticSimilarityModel()
 
     def test_identical_answers_high_similarity(self):
-        """
-        Fully mocked - never imports sentence_transformers so a broken
-        'datasets' package in the environment cannot cause this test to fail.
-        """
         from backend.similarity import SimilarityResult
 
         def fake_compute(student_answer, teacher_answer):
@@ -95,15 +199,13 @@ class TestSemanticSimilarity(unittest.TestCase):
 
         with patch.object(self.model, "compute_similarity", side_effect=fake_compute):
             result = self.model.compute_similarity("same text", "same text")
-            self.assertIsNotNone(result)
             self.assertAlmostEqual(result.score, 1.0, places=4)
 
     def test_similarity_score_range(self):
-        """Similarity must be between 0 and 1."""
         try:
             result = self.model.compute_similarity(
                 "A neural network is a machine learning model.",
-                "Neural networks are a type of machine learning algorithm."
+                "Neural networks are a type of machine learning algorithm.",
             )
             self.assertGreaterEqual(result.score, 0.0)
             self.assertLessEqual(result.score, 1.0)
@@ -112,7 +214,7 @@ class TestSemanticSimilarity(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────
-# LLM Evaluator Tests
+# LLM Evaluator Tests (open-ended only)
 # ─────────────────────────────────────────────────────────
 
 class TestLLMEvaluator(unittest.TestCase):
@@ -122,35 +224,34 @@ class TestLLMEvaluator(unittest.TestCase):
         self.evaluator = LLMEvaluator(api_key="fake_key")
 
     def test_parse_valid_json(self):
-        raw = ('{"score": 7.5, "confidence": 0.85, '
-               '"strengths": ["Good explanation"], '
-               '"missing_concepts": ["Examples"], '
-               '"feedback": "Good attempt."}')
+        raw    = ('{"score": 7.5, "confidence": 0.85, '
+                  '"strengths": ["Good explanation"], '
+                  '"missing_concepts": ["Examples"], '
+                  '"feedback": "Good attempt."}')
         result = self.evaluator._parse_response(raw, max_marks=10.0)
         self.assertEqual(result.score, 7.5)
         self.assertEqual(result.confidence, 0.85)
         self.assertIn("Good explanation", result.strengths)
 
     def test_parse_json_with_markdown_fence(self):
-        raw = ('```json\n{"score": 6, "confidence": 0.7, '
-               '"strengths": [], "missing_concepts": [], "feedback": "OK"}\n```')
+        raw    = ('```json\n{"score": 6, "confidence": 0.7, '
+                  '"strengths": [], "missing_concepts": [], "feedback": "OK"}\n```')
         result = self.evaluator._parse_response(raw, max_marks=10.0)
         self.assertEqual(result.score, 6.0)
 
     def test_score_clamped_to_max_marks(self):
-        raw = ('{"score": 15, "confidence": 0.9, '
-               '"strengths": [], "missing_concepts": [], "feedback": "test"}')
+        raw    = ('{"score": 15, "confidence": 0.9, '
+                  '"strengths": [], "missing_concepts": [], "feedback": "test"}')
         result = self.evaluator._parse_response(raw, max_marks=10.0)
         self.assertLessEqual(result.score, 10.0)
 
     def test_build_prompt_contains_question(self):
-        # rubric_criteria is a required positional arg in _build_prompt — pass None
         prompt = self.evaluator._build_prompt(
             question="What is AI?",
             teacher_answer="AI is artificial intelligence.",
             student_answer="AI is a technology.",
             max_marks=10.0,
-            rubric_criteria=None
+            rubric_criteria=None,
         )
         self.assertIn("What is AI?", prompt)
         self.assertIn("10", prompt)
@@ -161,14 +262,24 @@ class TestLLMEvaluator(unittest.TestCase):
             teacher_answer="ML is machine learning.",
             student_answer="ML learns from data.",
             max_marks=5.0,
-            rubric_criteria=["definition", "example"]
+            rubric_criteria=["definition", "example"],
         )
         self.assertIn("definition", prompt)
         self.assertIn("example", prompt)
 
+    def test_empty_student_answer_returns_zero(self):
+        result = self.evaluator.evaluate(
+            question="What is AI?",
+            teacher_answer="AI is artificial intelligence.",
+            student_answer="",
+            max_marks=10.0,
+        )
+        self.assertEqual(result.score, 0.0)
+        self.assertEqual(result.confidence, 1.0)
+
 
 # ─────────────────────────────────────────────────────────
-# Hybrid Scoring Tests
+# Hybrid Scoring Tests (open-ended)
 # ─────────────────────────────────────────────────────────
 
 class TestHybridScoring(unittest.TestCase):
@@ -181,8 +292,7 @@ class TestHybridScoring(unittest.TestCase):
             self.engine.SIM_WEIGHT = 0.4
 
     def test_hybrid_formula(self):
-        """Final = 0.6 x LLM + 0.4 x sim x max"""
-        score = self.engine._hybrid_score(llm_score=7.0, similarity=0.8, max_marks=10.0)
+        score    = self.engine._hybrid_score(llm_score=7.0, similarity=0.8, max_marks=10.0)
         expected = 0.6 * 7.0 + 0.4 * 0.8 * 10.0
         self.assertAlmostEqual(score, expected, places=4)
 
@@ -191,7 +301,7 @@ class TestHybridScoring(unittest.TestCase):
         self.assertAlmostEqual(score, 0.4 * 0.9 * 10.0, places=4)
 
     def test_perfect_score(self):
-        score = self.engine._hybrid_score(10.0, 1.0, 10.0)
+        score    = self.engine._hybrid_score(10.0, 1.0, 10.0)
         expected = 0.6 * 10.0 + 0.4 * 1.0 * 10.0
         self.assertAlmostEqual(score, expected, places=4)
 
@@ -202,29 +312,120 @@ class TestHybridScoring(unittest.TestCase):
 
 class TestMetrics(unittest.TestCase):
 
-    def test_perfect_agreement(self):
+    def test_perfect_agreement_open_ended(self):
         from backend.metrics import compute_metrics
-        ai = [7.0, 8.0, 6.5, 9.0]
-        gt = [7.0, 8.0, 6.5, 9.0]
-        report = compute_metrics(ai, gt)
-        self.assertAlmostEqual(report.mae, 0.0, places=4)
-        self.assertAlmostEqual(report.pearson_r, 1.0, places=4)
-        self.assertEqual(report.accuracy_within_1, 1.0)
+        ai  = [7.0, 8.0, 6.5, 9.0]
+        gt  = [7.0, 8.0, 6.5, 9.0]
+        rep = compute_metrics(ai, gt, question_type="open_ended")
+        self.assertAlmostEqual(rep.mae, 0.0, places=4)
+        self.assertAlmostEqual(rep.pearson_r, 1.0, places=4)
+        self.assertEqual(rep.accuracy_within_1, 1.0)
 
     def test_mae_computation(self):
         from backend.metrics import compute_metrics
-        ai = [5.0, 7.0, 9.0]
-        gt = [6.0, 7.0, 8.0]
-        report = compute_metrics(ai, gt)
-        self.assertAlmostEqual(report.mae, 2.0 / 3.0, places=4)
+        ai  = [5.0, 7.0, 9.0]
+        gt  = [6.0, 7.0, 8.0]
+        rep = compute_metrics(ai, gt, question_type="open_ended")
+        self.assertAlmostEqual(rep.mae, 2.0 / 3.0, places=4)
 
     def test_accuracy_within_1(self):
         from backend.metrics import compute_metrics
-        ai = [7.0, 8.0, 4.0]
-        gt = [8.0, 8.0, 8.0]
-        report = compute_metrics(ai, gt)
-        # [7 vs 8: within 1 ok], [8 vs 8: within 1 ok], [4 vs 8: not within 1]
-        self.assertAlmostEqual(report.accuracy_within_1, 2.0 / 3.0, places=4)
+        ai  = [7.0, 8.0, 4.0]
+        gt  = [8.0, 8.0, 8.0]
+        rep = compute_metrics(ai, gt, question_type="open_ended")
+        self.assertAlmostEqual(rep.accuracy_within_1, 2.0 / 3.0, places=4)
+
+    def test_mcq_accuracy_all_correct(self):
+        from backend.metrics import compute_mcq_metrics
+        pred = ["A", "B", "C", "D"]
+        corr = ["A", "B", "C", "D"]
+        rep  = compute_mcq_metrics(pred, corr)
+        self.assertEqual(rep.mcq_accuracy, 1.0)
+        self.assertEqual(rep.mcq_n_correct, 4)
+        self.assertEqual(rep.mcq_n_wrong, 0)
+
+    def test_mcq_accuracy_partial(self):
+        from backend.metrics import compute_mcq_metrics
+        pred = ["A", "B", "C"]
+        corr = ["A", "C", "C"]
+        rep  = compute_mcq_metrics(pred, corr)
+        # A==A ✓, B!=C ✗, C==C ✓ → 2/3
+        self.assertAlmostEqual(rep.mcq_accuracy, 2.0 / 3.0, places=4)
+        self.assertEqual(rep.mcq_n_wrong, 1)
+
+    def test_mcq_accuracy_all_wrong(self):
+        from backend.metrics import compute_mcq_metrics
+        pred = ["A", "A", "A"]
+        corr = ["B", "C", "D"]
+        rep  = compute_mcq_metrics(pred, corr)
+        self.assertEqual(rep.mcq_accuracy, 0.0)
+
+    def test_mcq_metrics_report_question_type(self):
+        from backend.metrics import compute_metrics
+        ai  = [1.0, 0.0, 1.0]
+        gt  = [1.0, 1.0, 1.0]
+        rep = compute_metrics(ai, gt, question_type="mcq")
+        self.assertEqual(rep.question_type, "mcq")
+
+    def test_mixed_metrics_run_without_error(self):
+        from backend.metrics import compute_metrics
+        ai  = [7.0, 1.0, 5.0]
+        gt  = [8.0, 1.0, 5.0]
+        rep = compute_metrics(ai, gt, question_type="mixed")
+        self.assertEqual(rep.n_samples, 3)
+
+
+# ─────────────────────────────────────────────────────────
+# Rubric Matcher Tests
+# ─────────────────────────────────────────────────────────
+
+class TestRubricMatcher(unittest.TestCase):
+
+    def setUp(self):
+        from backend.rubric_matcher import RubricMatcher
+        self.matcher = RubricMatcher()
+
+    def test_mcq_returns_empty_rubric(self):
+        """Rubric should be skipped entirely for MCQ questions."""
+        rubric = [{"criterion": "definition", "marks": 2.0}]
+        result = self.matcher.evaluate_rubric(
+            student_answer="B",
+            rubric_criteria=rubric,
+            question_type="mcq",
+        )
+        self.assertEqual(result.earned_rubric_marks, 0.0)
+        self.assertEqual(result.criteria_scores, {})
+
+    def test_empty_rubric_returns_zero(self):
+        result = self.matcher.evaluate_rubric(
+            student_answer="Some answer",
+            rubric_criteria=[],
+            question_type="open_ended",
+        )
+        self.assertEqual(result.earned_rubric_marks, 0.0)
+        self.assertEqual(result.coverage_ratio, 0.0)
+
+
+# ─────────────────────────────────────────────────────────
+# QuestionType Enum Tests
+# ─────────────────────────────────────────────────────────
+
+class TestQuestionType(unittest.TestCase):
+
+    def test_enum_values(self):
+        from backend.evaluator import QuestionType
+        self.assertEqual(QuestionType.MCQ, "mcq")
+        self.assertEqual(QuestionType.OPEN_ENDED, "open_ended")
+
+    def test_enum_from_string(self):
+        from backend.evaluator import QuestionType
+        self.assertEqual(QuestionType("mcq"), QuestionType.MCQ)
+        self.assertEqual(QuestionType("open_ended"), QuestionType.OPEN_ENDED)
+
+    def test_invalid_enum_raises(self):
+        from backend.evaluator import QuestionType
+        with self.assertRaises(ValueError):
+            QuestionType("essay")
 
 
 # ─────────────────────────────────────────────────────────
