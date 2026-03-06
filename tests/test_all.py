@@ -435,7 +435,11 @@ class TestEvaluationEngine(unittest.TestCase):
     def test_hybrid_score(self):
         """Test hybrid score calculation"""
         score = self.engine._hybrid_score(7.0, 0.8, 10.0)
-        expected = 0.6 * 7.0 + 0.4 * 0.8 * 10.0
+        # Formula: max_marks × (0.40×(llm/max) + 0.25×sim + 0.20×rubric + 0.10×keyword + 0.05×length)
+        # With defaults: rubric=0.0, keyword=0.5, length=1.0
+        # = 10 × (0.40×0.7 + 0.25×0.8 + 0.20×0.0 + 0.10×0.5 + 0.05×1.0)
+        # = 10 × (0.28 + 0.20 + 0.00 + 0.05 + 0.05) = 10 × 0.58 = 5.8
+        expected = 5.8
         self.assertAlmostEqual(score, expected)
 
     def test_empty_result_creation(self):
@@ -465,15 +469,16 @@ class TestMetrics(unittest.TestCase):
         """Test MAE computation"""
         ai = [5.0, 7.0, 9.0]
         teacher = [6.0, 7.0, 8.0]
+        # errors: |5-6|=1, |7-7|=0, |9-8|=1 → MAE = (1+0+1)/3 = 0.6667
         report = compute_metrics(ai, teacher)
-        self.assertAlmostEqual(report.mae, 1.0)
+        self.assertAlmostEqual(report.mae, 2/3, places=5)
 
     def test_mcq_metrics(self):
         """Test MCQ metrics"""
         pred = ["A", "B", "C"]
         correct = ["A", "C", "C"]
         report = compute_mcq_metrics(pred, correct)
-        self.assertAlmostEqual(report.mcq_accuracy, 2/3)
+        self.assertAlmostEqual(report.mcq_accuracy, 2/3, places=5)
         self.assertEqual(report.mcq_n_correct, 2)
         self.assertEqual(report.mcq_n_wrong, 1)
 

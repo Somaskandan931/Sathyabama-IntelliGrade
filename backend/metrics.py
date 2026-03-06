@@ -83,7 +83,7 @@ def compute_mcq_metrics(
     return MetricsReport(
         question_type="mcq",
         n_samples=len(predicted_options),
-        mcq_accuracy=round(accuracy, 4),
+        mcq_accuracy=round(accuracy, 10),
         mcq_n_correct=n_correct,
         mcq_n_wrong=n_wrong,
     )
@@ -109,13 +109,13 @@ def _open_ended_metrics(
     return MetricsReport(
         question_type=qtype,
         n_samples=n,
-        mae=round(mae, 4),
-        pearson_r=round(pearson_r, 4),
-        cohen_kappa=round(kappa, 4),
-        accuracy_within_1=round(acc_1, 4),
-        accuracy_within_0_5=round(acc_05, 4),
-        mean_ai_score=round(float(np.mean(ai)), 4),
-        mean_teacher_score=round(float(np.mean(gt)), 4),
+        mae=round(mae, 10),
+        pearson_r=round(pearson_r, 10),
+        cohen_kappa=round(kappa, 10),
+        accuracy_within_1=round(acc_1, 10),
+        accuracy_within_0_5=round(acc_05, 10),
+        mean_ai_score=round(float(np.mean(ai)), 10),
+        mean_teacher_score=round(float(np.mean(gt)), 10),
     )
 
 
@@ -130,12 +130,12 @@ def _mcq_metrics(
     return MetricsReport(
         question_type="mcq",
         n_samples=n,
-        mcq_accuracy=round(accuracy, 4),
+        mcq_accuracy=round(accuracy, 10),
         mcq_n_correct=n_correct,
         mcq_n_wrong=n_wrong,
         # Also fill score-based metrics for consistency
-        mae=round(float(np.mean(np.abs(ai - gt))), 4),
-        accuracy_within_1=round(float(np.mean(np.abs(ai - gt) <= 1.0)), 4),
+        mae=round(float(np.mean(np.abs(ai - gt))), 10),
+        accuracy_within_1=round(float(np.mean(np.abs(ai - gt) <= 1.0)), 10),
     )
 
 

@@ -18,6 +18,34 @@ import json
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 
+
+class ExplanationDetail:
+    """
+    Wraps the LLM 'explanation' dict so tests can access fields as attributes.
+    e.g. result.explanation.score_rationale
+    Falls back gracefully when keys are missing.
+    """
+    def __init__(self, data):
+        if isinstance(data, dict):
+            self._data = data
+            for k, v in data.items():
+                setattr(self, k, v)
+        elif isinstance(data, str):
+            self._data = {"score_rationale": data}
+            self.score_rationale = data
+        else:
+            self._data = {}
+
+    def __repr__(self):
+        return f"ExplanationDetail({self._data})"
+
+    def __bool__(self):
+        return bool(self._data)
+
+    # Fallback so missing keys return None instead of raising AttributeError
+    def __getattr__(self, name):
+        return None
+
 from prompts.evaluation_prompts import (
     STANDARD_PROMPT,
     CS_ENGINEERING_PROMPT,
@@ -36,6 +64,7 @@ class LLMEvaluation:
     strengths: list = field(default_factory=list)
     missing_concepts: list = field(default_factory=list)
     feedback: str = ""
+    explanation: Any = field(default_factory=ExplanationDetail)   # ExplanationDetail object
     confidence: float = 0.0
     provider: str = ""
     model: str = ""
@@ -91,6 +120,7 @@ class LLMEvaluator:
             return LLMEvaluation(
                 score=0.0, max_marks=max_marks,
                 feedback="No student answer was provided for evaluation.",
+                explanation=ExplanationDetail("Student answer was empty — automatic zero awarded."),
                 confidence=1.0,
             )
 
@@ -128,6 +158,7 @@ class LLMEvaluator:
                     strengths=data.get("strengths", []),
                     missing_concepts=data.get("missing_concepts", []),
                     feedback=data.get("feedback", "No feedback generated."),
+                    explanation=ExplanationDetail(data.get("explanation", data.get("feedback", ""))),
                     confidence=float(data.get("confidence", 0.7)),
                     provider=provider_name,
                     model=model_name,
@@ -150,6 +181,7 @@ class LLMEvaluator:
             return LLMEvaluation(
                 score=0.0, max_marks=max_marks,
                 feedback=f"Evaluation failed: {str(e)}. Please try again.",
+                explanation=ExplanationDetail(f"LLM call failed with error: {str(e)}"),
                 confidence=0.0,
             )
 
@@ -267,6 +299,57 @@ Respond ONLY with valid JSON (no markdown, no extra text):
             student_answer=student_answer,
             max_marks=max_marks,
         )
+
+    def _build_enhanced_prompt(
+        self,
+        question: str,
+        student_answer: str,
+        teacher_answer: str,
+        max_marks: float = 10.0,
+        rubric: Optional[str] = None,
+        rubric_criteria: Optional[list] = None,
+    ) -> str:
+        """
+        Enhanced evaluation prompt that produces score + feedback + explanation.
+        Used by explainability tests and any caller that needs a detailed breakdown.
+
+        Accepts either a pre-formatted rubric string (rubric=) or a list of
+        criterion dicts (rubric_criteria=) — both produce the same output.
+        """
+        rubric_text = ""
+        if rubric:
+            rubric_text = f"\nRUBRIC:\n{rubric}\n"
+        elif rubric_criteria:
+            rubric_text = self._rubric_section(rubric_criteria)
+
+        return f"""You are a university professor grading an exam.
+
+QUESTION:
+{question}
+
+REFERENCE ANSWER (model answer written by the teacher):
+{teacher_answer}
+
+STUDENT ANSWER:
+{student_answer}
+
+MAXIMUM MARKS: {max_marks}
+{rubric_text}
+EVALUATION GUIDELINES:
+1. Compare the student answer against the reference answer for conceptual accuracy.
+2. Give partial credit proportional to understanding demonstrated.
+3. Do NOT penalise OCR spelling errors — focus on concepts.
+4. Provide a clear explanation of why the score was awarded.
+
+Respond ONLY with valid JSON (no markdown, no extra text):
+{{
+  "score": <float between 0 and {max_marks}>,
+  "confidence": <float 0–1>,
+  "strengths": [<list of strings: what the student did well>],
+  "missing_concepts": [<list of strings: key concepts not covered>],
+  "feedback": "<constructive paragraph for the student>",
+  "explanation": "<one-paragraph rationale explaining the score awarded>"
+}}"""
 
     def _build_short_answer_prompt(self, question, teacher_answer, student_answer, max_marks, rubric_criteria) -> str:
         return f"""You are grading a short-answer question. Expected response is 1-3 sentences.
@@ -402,6 +485,7 @@ GRADING GUIDELINES:
             strengths=data.get("strengths", []),
             missing_concepts=data.get("missing_concepts", []),
             feedback=data.get("feedback", "No feedback generated."),
+            explanation=ExplanationDetail(data.get("explanation", data.get("feedback", ""))),
             confidence=float(data.get("confidence", 0.7)),
             raw_response=raw,
         )

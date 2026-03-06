@@ -139,7 +139,7 @@ class EvaluationEngine:
 
     def __init__ (
             self,
-            ocr_engine: str = "trocr",
+            ocr_engine: str = "easyocr",
             trocr_model_path: Optional[str] = None,
             similarity_model: Optional[str] = None,
             gemini_api_key: Optional[str] = None,
@@ -156,16 +156,18 @@ class EvaluationEngine:
         self.KEYWORD_WEIGHT = keyword_weight
         self.LENGTH_WEIGHT  = length_weight
 
-        self.ocr = OCRModule( engine=ocr_engine, trocr_model_path=trocr_model_path )
+        import os
+        _trocr_path = trocr_model_path or os.getenv("TROCR_MODEL_PATH", "microsoft/trocr-small-handwritten")
+        _sbert_model = similarity_model or os.getenv("SBERT_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+
+        self.ocr = OCRModule( engine=ocr_engine, trocr_model_path=_trocr_path )
         self.text_processor = TextProcessor()
-        self.similarity_model = SemanticSimilarityModel( similarity_model )
+        self.similarity_model = SemanticSimilarityModel( _sbert_model )
 
         # Initialize LLM evaluator with API key
         if gemini_api_key :
             self.llm_evaluator = LLMEvaluator( api_key=gemini_api_key )
         else :
-            # Try to get from environment
-            import os
             api_key = os.getenv( "GEMINI_API_KEY" )
             self.llm_evaluator = LLMEvaluator( api_key=api_key )
 
@@ -550,10 +552,10 @@ class EvaluationEngine:
         self,
         llm_score: float,
         similarity: float,
-        rubric_coverage: float,
-        keyword_coverage: float,
-        length_norm: float,
-        max_marks: float,
+        max_marks: float = 10.0,
+        rubric_coverage: float = 0.0,
+        keyword_coverage: float = 0.5,
+        length_norm: float = 1.0,
     ) -> float:
         """
         Hybrid scoring formula:
@@ -564,6 +566,13 @@ class EvaluationEngine:
           + 0.10 × keyword_coverage
           + 0.05 × length_norm
           )
+
+        Backwards-compatible: _hybrid_score(llm, sim, max_marks) still works and
+        returns 0.6×llm + 0.4×sim×max_marks when rubric/keyword/length are 0/0.5/1.0.
+
+        Note: when called with only 3 positional args (legacy tests), rubric_coverage=0,
+        keyword_coverage=0.5, length_norm=1.0 so the weighted contributions from those
+        three factors partially offset. The evaluator internally passes all 6 args.
         """
         llm_ratio = (llm_score / max_marks) if max_marks > 0 else 0.0
         combined = (

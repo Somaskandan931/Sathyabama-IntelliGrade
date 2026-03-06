@@ -31,7 +31,7 @@ GROQ_MODEL        = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL      = os.getenv("CLAUDE_MODEL", "claude-3-haiku-20240307")
 OLLAMA_BASE_URL   = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL      = os.getenv("OLLAMA_MODEL", "llama3.2")
+OLLAMA_MODEL      = os.getenv("OLLAMA_MODEL", "llama3:latest")
 
 # ── OCR ────────────────────────────────────────────────────────────────────
 # Options: "easyocr" | "trocr" | "ensemble"
@@ -70,3 +70,43 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 
 # ── Logging ────────────────────────────────────────────────────────────────
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# ── Settings dataclass (used by llm_examiner.py and other modules) ──────────
+
+from dataclasses import dataclass
+from functools import lru_cache
+
+
+@dataclass
+class Settings:
+    gemini_api_key: str = GEMINI_API_KEY
+    gemini_model: str = GEMINI_MODEL
+    groq_api_key: str = GROQ_API_KEY
+    groq_model: str = GROQ_MODEL
+    anthropic_api_key: str = ANTHROPIC_API_KEY
+    claude_model: str = CLAUDE_MODEL
+    ollama_base_url: str = OLLAMA_BASE_URL
+    ollama_model: str = OLLAMA_MODEL
+    ocr_engine: str = OCR_ENGINE
+    trocr_model_path: str = TROCR_MODEL_PATH
+    sbert_model: str = SBERT_MODEL
+    layout_detector: str = LAYOUT_DETECTOR
+    yolo_model_path: str = YOLO_MODEL_PATH
+    diagram_conf_threshold: float = DIAGRAM_CONF_THRESHOLD
+    llm_weight: float = LLM_WEIGHT
+    similarity_weight: float = SIMILARITY_WEIGHT
+    rubric_weight: float = RUBRIC_WEIGHT
+    keyword_weight: float = KEYWORD_WEIGHT
+    length_weight: float = LENGTH_WEIGHT
+    database_url: str = DATABASE_URL
+    upload_dir: str = str(UPLOAD_DIR)
+    max_file_size_mb: int = MAX_FILE_SIZE_MB
+    api_host: str = API_HOST
+    api_port: int = API_PORT
+    log_level: str = LOG_LEVEL
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return a cached Settings instance populated from environment variables."""
+    return Settings()

@@ -104,10 +104,12 @@ class BaseLLMProvider:
 class GeminiProvider(BaseLLMProvider):
     """Google Gemini API provider"""
 
-    DEFAULT_MODEL = "gemini-1.5-flash"
+    DEFAULT_MODEL = "gemini-2.0-flash"
     MODELS = {
-        "gemini-1.5-flash": {"input_cost": 0.000375, "output_cost": 0.00125},
-        "gemini-1.5-pro": {"input_cost": 0.0025, "output_cost": 0.0075},
+        "gemini-2.0-flash":     {"input_cost": 0.000100, "output_cost": 0.000400},
+        "gemini-2.0-flash-lite":{"input_cost": 0.000075, "output_cost": 0.000300},
+        "gemini-1.5-flash":     {"input_cost": 0.000375, "output_cost": 0.001250},
+        "gemini-1.5-pro":       {"input_cost": 0.002500, "output_cost": 0.007500},
     }
 
     def __init__(self, api_key: str, model: Optional[str] = None):
@@ -231,9 +233,10 @@ class ClaudeProvider(BaseLLMProvider):
 
     DEFAULT_MODEL = "claude-3-haiku-20240307"
     MODELS = {
-        "claude-3-haiku-20240307": {"input_cost": 0.00025, "output_cost": 0.00125},
-        "claude-3-sonnet-20240229": {"input_cost": 0.003, "output_cost": 0.015},
-        "claude-3-opus-20240229": {"input_cost": 0.015, "output_cost": 0.075},
+        "claude-3-haiku-20240307":  {"input_cost": 0.00025,  "output_cost": 0.00125},
+        "claude-3-5-haiku-20241022":{"input_cost": 0.0008,   "output_cost": 0.004},
+        "claude-3-5-sonnet-20241022":{"input_cost": 0.003,   "output_cost": 0.015},
+        "claude-3-opus-20240229":   {"input_cost": 0.015,    "output_cost": 0.075},
     }
 
     def __init__(self, api_key: str, model: Optional[str] = None):
@@ -451,7 +454,7 @@ class OllamaProvider(BaseLLMProvider):
     def __init__(self, base_url: Optional[str] = None, model: Optional[str] = None):
         super().__init__("ollama")
         self.base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.model = model or os.getenv("OLLAMA_MODEL", "llama3")
+        self.model = model or os.getenv("OLLAMA_MODEL", "llama3:latest")
         logger.info("✅ Ollama provider configured: %s with model %s", self.base_url, self.model)
 
     def is_available(self) -> bool:
@@ -746,11 +749,11 @@ class LLMClient:
         elif preference == "ollama":
             add_provider(OllamaProvider)
             add_provider(GroqProvider, groq_key)  # Fallback to cloud
-        else:  # auto - try all in sensible order
-            add_provider(ClaudeProvider, anthropic_key)  # Best quality
-            add_provider(GeminiProvider, gemini_key)     # Good balance
-            add_provider(GroqProvider, groq_key)         # Fast
-            add_provider(OllamaProvider)                  # Offline
+        else:  # auto - priority matches .env: Gemini primary, Groq second, Claude third, Ollama offline
+            add_provider(GeminiProvider, gemini_key)     # Primary — key set in .env
+            add_provider(GroqProvider, groq_key)         # Fast fallback
+            add_provider(ClaudeProvider, anthropic_key)  # Quality fallback
+            add_provider(OllamaProvider)                  # Offline last resort
 
         # Always add rule-based as final safety net
         providers.append(RuleBasedFallbackProvider())

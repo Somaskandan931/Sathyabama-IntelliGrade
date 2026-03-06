@@ -83,9 +83,14 @@ def get_engine() -> EvaluationEngine:
     global _engine
     if _engine is None:
         _engine = EvaluationEngine(
-            ocr_engine=os.getenv("OCR_ENGINE", "ensemble"),
-            llm_weight=float(os.getenv("LLM_WEIGHT", "0.6")),
-            similarity_weight=float(os.getenv("SIMILARITY_WEIGHT", "0.4")),
+            ocr_engine=os.getenv("OCR_ENGINE", "easyocr"),
+            trocr_model_path=os.getenv("TROCR_MODEL_PATH", "microsoft/trocr-small-handwritten"),
+            similarity_model=os.getenv("SBERT_MODEL", "sentence-transformers/all-MiniLM-L6-v2"),
+            llm_weight=float(os.getenv("LLM_WEIGHT", "0.40")),
+            similarity_weight=float(os.getenv("SIMILARITY_WEIGHT", "0.25")),
+            rubric_weight=float(os.getenv("RUBRIC_WEIGHT", "0.20")),
+            keyword_weight=float(os.getenv("KEYWORD_WEIGHT", "0.10")),
+            length_weight=float(os.getenv("LENGTH_WEIGHT", "0.05")),
         )
     return _engine
 
@@ -255,7 +260,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -759,8 +764,8 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "backend.api:app",
-        host="0.0.0.0",
-        port=8000,
+        host=os.getenv("API_HOST", "0.0.0.0"),
+        port=int(os.getenv("API_PORT", "8000")),
         reload=True,
         reload_excludes=["tests/*", "*.pyc"],
     )

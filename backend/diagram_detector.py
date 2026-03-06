@@ -86,8 +86,9 @@ class DiagramDetector:
         model_path: Optional[str] = None,
         confidence_threshold: float = 0.35,
     ):
-        self._model_path = model_path or self.DEFAULT_YOLO_MODEL
-        self._conf = confidence_threshold
+        import os
+        self._model_path = model_path or os.getenv("YOLO_MODEL_PATH", self.DEFAULT_YOLO_MODEL)
+        self._conf = float(os.getenv("DIAGRAM_CONF_THRESHOLD", str(confidence_threshold)))
         self._model = None
         self._yolo_available = False
         self._try_load_yolo()
