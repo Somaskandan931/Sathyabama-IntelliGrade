@@ -2,14 +2,16 @@ version: "3.9"
 
 services:
 
-  # ── PostgreSQL Database ──────────────────────────────────────
+  # ──────────────────────────────────────────
+  # PostgreSQL Database
+  # ──────────────────────────────────────────
   db:
     image: postgres:16-alpine
-    restart: unless-stopped
+    container_name: intelligrade_db
     environment:
-      POSTGRES_DB: intelligrade
       POSTGRES_USER: intelligrade
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: intelligrade_pass
+      POSTGRES_DB: intelligrade
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -20,39 +22,46 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── FastAPI Backend ──────────────────────────────────────────
+  # ──────────────────────────────────────────
+  # FastAPI Backend
+  # ──────────────────────────────────────────
   backend:
     build:
       context: .
-      dockerfile: docker/Dockerfile.backend
-    restart: unless-stopped
+      dockerfile: Dockerfile.backend
+    container_name: intelligrade_api
+    environment:
+      - DATABASE_URL=postgresql://intelligrade:intelligrade_pass@db:5432/intelligrade
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - UPLOAD_DIR=/app/uploads
+      - OCR_ENGINE=trocr
+      - LLM_WEIGHT=0.6
+      - SIMILARITY_WEIGHT=0.4
+    volumes:
+      - ./uploads:/app/uploads
+      - ./models:/app/models
+    ports:
+      - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://intelligrade:${POSTGRES_PASSWORD:-changeme}@db:5432/intelligrade
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      OCR_MODEL_PATH: /app/models/trocr_finetuned
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./models:/app/models
-      - ./datasets:/app/datasets
-    command: uvicorn api:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
 
-  # ── Streamlit Frontend ───────────────────────────────────────
+  # ──────────────────────────────────────────
+  # Streamlit Frontend
+  # ──────────────────────────────────────────
   frontend:
     build:
       context: .
-      dockerfile: docker/Dockerfile.frontend
-    restart: unless-stopped
-    depends_on:
-      - backend
+      dockerfile: Dockerfile.frontend
+    container_name: intelligrade_ui
     environment:
-      API_BASE: http://backend:8000
+      - API_BASE=http://backend:8000
     ports:
       - "8501:8501"
-    command: streamlit run dashboard.py --server.port 8501 --server.address 0.0.0.0
+    depends_on:
+      - backend
+    restart: unless-stopped
 
 volumes:
   postgres_data:
