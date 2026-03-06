@@ -38,12 +38,25 @@ OLLAMA_MODEL      = os.getenv("OLLAMA_MODEL", "llama3.2")
 OCR_ENGINE       = os.getenv("OCR_ENGINE", "easyocr")
 TROCR_MODEL_PATH = os.getenv("TROCR_MODEL_PATH", "microsoft/trocr-small-handwritten")
 
+# ── Document Layout Detection ──────────────────────────────────────────────
+# Options: "detectron2" | "opencv_fallback" | "auto"
+LAYOUT_DETECTOR  = os.getenv("LAYOUT_DETECTOR", "auto")
+
+# ── Diagram Detection ──────────────────────────────────────────────────────
+# Path to custom YOLOv8 weights, or use default "yolov8n.pt"
+YOLO_MODEL_PATH  = os.getenv("YOLO_MODEL_PATH", "yolov8n.pt")
+DIAGRAM_CONF_THRESHOLD = float(os.getenv("DIAGRAM_CONF_THRESHOLD", "0.35"))
+
 # ── Semantic Similarity ────────────────────────────────────────────────────
 SBERT_MODEL = os.getenv("SBERT_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
-# ── Scoring Weights ────────────────────────────────────────────────────────
-LLM_WEIGHT        = float(os.getenv("LLM_WEIGHT", "0.6"))
-SIMILARITY_WEIGHT = float(os.getenv("SIMILARITY_WEIGHT", "0.4"))
+# ── Hybrid Scoring Weights (must sum to 1.0) ───────────────────────────────
+# Formula: Final = LLM×0.40 + Similarity×0.25 + Rubric×0.20 + Keyword×0.10 + Length×0.05
+LLM_WEIGHT        = float(os.getenv("LLM_WEIGHT",        "0.40"))
+SIMILARITY_WEIGHT = float(os.getenv("SIMILARITY_WEIGHT", "0.25"))
+RUBRIC_WEIGHT     = float(os.getenv("RUBRIC_WEIGHT",     "0.20"))
+KEYWORD_WEIGHT    = float(os.getenv("KEYWORD_WEIGHT",    "0.10"))
+LENGTH_WEIGHT     = float(os.getenv("LENGTH_WEIGHT",     "0.05"))
 
 # ── File Upload ────────────────────────────────────────────────────────────
 MAX_FILE_SIZE_MB    = int(os.getenv("MAX_FILE_SIZE_MB", "20"))

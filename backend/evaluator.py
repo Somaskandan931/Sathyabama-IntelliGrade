@@ -1,19 +1,26 @@
 """
-IntelliGrade-H - Evaluation Engine
+IntelliGrade-H - Evaluation Engine (v3)
 Orchestrates the full grading pipeline for any question type.
 
 Supported question types:
-  ┌─────────────┬───────────────────────────────────────────────────┐
-  │ Type        │ Grading method                                    │
-  ├─────────────┼───────────────────────────────────────────────────┤
-  │ mcq         │ Deterministic: OCR → extract option → exact match │
-  │ true_false  │ Deterministic: OCR → extract T/F → exact match   │
-  │ fill_blank  │ LLM: near-match with OCR tolerance                │
-  │ short_answer│ LLM + Similarity                                  │
-  │ numerical   │ LLM: method + answer with tolerance               │
-  │ open_ended  │ LLM + Similarity + Rubric (full pipeline)         │
-  │ diagram     │ LLM (OCR text of labels/annotations)              │
-  └─────────────┴───────────────────────────────────────────────────┘
+  ┌─────────────┬────────────────────────────────────────────────────────────┐
+  │ Type        │ Grading method                                             │
+  ├─────────────┼────────────────────────────────────────────────────────────┤
+  │ mcq         │ Deterministic: OCR → extract option → exact match         │
+  │ true_false  │ Deterministic: OCR → extract T/F → exact match            │
+  │ fill_blank  │ LLM: near-match with OCR tolerance                        │
+  │ short_answer│ LLM + Similarity + Keyword                                │
+  │ numerical   │ LLM: method + answer with tolerance                       │
+  │ open_ended  │ LLM + Similarity + Rubric + Keyword + Length (full)       │
+  │ diagram     │ LLM (OCR text of labels/annotations)                      │
+  └─────────────┴────────────────────────────────────────────────────────────┘
+
+Hybrid scoring formula (open_ended / short_answer):
+  Final = 0.40 × LLM Score
+        + 0.25 × Semantic Similarity
+        + 0.20 × Rubric Coverage
+        + 0.10 × Keyword Coverage
+        + 0.05 × Length Normalization
 
 Set question_type="auto" to let the LLM classify it automatically.
 """
@@ -29,6 +36,8 @@ from backend.text_processor import TextProcessor, ProcessedText
 from backend.similarity import SemanticSimilarityModel, SimilarityResult
 from backend.llm_evaluator import LLMEvaluator, LLMEvaluation
 from backend.rubric_matcher import RubricMatcher, RubricResult
+from backend.layout_detector import LayoutDetector, LayoutResult
+from backend.diagram_detector import DiagramDetector, DiagramDetectionResult
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +79,8 @@ class EvaluationResult:
     llm_score: float = 0.0
     similarity_score: float = 0.0
     rubric_score: float = 0.0
+    keyword_score: float = 0.0      # keyword coverage (0–1)
+    length_score: float = 0.0       # length normalization bonus (0–1)
 
     # Deterministic grading fields
     detected_answer: str = ""     # MCQ option / T or F / numerical value
@@ -110,10 +121,21 @@ class EvaluationEngine:
     """
     Main pipeline for IntelliGrade-H.
     Pass question_type="auto" to auto-classify using the LLM.
+
+    Hybrid scoring weights (open_ended / short_answer):
+      LLM Score         : 0.40
+      Semantic Similarity: 0.25
+      Rubric Coverage   : 0.20
+      Keyword Coverage  : 0.10
+      Length Normaliz.  : 0.05
     """
 
-    LLM_WEIGHT = 0.6
-    SIM_WEIGHT = 0.4
+    # Scoring weights — must sum to 1.0
+    LLM_WEIGHT        = 0.40
+    SIM_WEIGHT        = 0.25
+    RUBRIC_WEIGHT     = 0.20
+    KEYWORD_WEIGHT    = 0.10
+    LENGTH_WEIGHT     = 0.05
 
     def __init__ (
             self,
@@ -121,12 +143,18 @@ class EvaluationEngine:
             trocr_model_path: Optional[str] = None,
             similarity_model: Optional[str] = None,
             gemini_api_key: Optional[str] = None,
-            llm_weight: float = 0.6,
-            similarity_weight: float = 0.4,
+            llm_weight: float = 0.40,
+            similarity_weight: float = 0.25,
+            rubric_weight: float = 0.20,
+            keyword_weight: float = 0.10,
+            length_weight: float = 0.05,
             use_rubric: bool = True,
     ) :
-        self.LLM_WEIGHT = llm_weight
-        self.SIM_WEIGHT = similarity_weight
+        self.LLM_WEIGHT     = llm_weight
+        self.SIM_WEIGHT     = similarity_weight
+        self.RUBRIC_WEIGHT  = rubric_weight
+        self.KEYWORD_WEIGHT = keyword_weight
+        self.LENGTH_WEIGHT  = length_weight
 
         self.ocr = OCRModule( engine=ocr_engine, trocr_model_path=trocr_model_path )
         self.text_processor = TextProcessor()
@@ -141,7 +169,9 @@ class EvaluationEngine:
             api_key = os.getenv( "GEMINI_API_KEY" )
             self.llm_evaluator = LLMEvaluator( api_key=api_key )
 
-        self.rubric_matcher = RubricMatcher() if use_rubric else None
+        self.rubric_matcher   = RubricMatcher() if use_rubric else None
+        self.layout_detector  = LayoutDetector()      # Detectron2 / OpenCV fallback
+        self.diagram_detector = DiagramDetector()     # YOLOv8 / heuristic fallback
         self._classifier = None  # lazy-init to avoid circular imports
 
         logger.info( "EvaluationEngine initialized with LLM provider: %s",
@@ -421,11 +451,28 @@ class EvaluationEngine:
                 rubric_criteria=rubric_criteria,
                 question_type="open_ended",
             )
-            rubric_score = rubric_result.earned_rubric_marks
+            rubric_score = rubric_result.coverage_ratio   # 0–1 coverage
+
+        # Keyword coverage score
+        keyword_score = 0.0
+        if teacher_answer and qtype in SIMILARITY_TYPES:
+            keyword_score = self._keyword_coverage(student_text, teacher_answer)
+
+        # Length normalization score
+        length_score = 0.0
+        if teacher_answer and qtype in SIMILARITY_TYPES:
+            length_score = self._length_normalization(student_text, teacher_answer)
 
         # Hybrid score
         if qtype in SIMILARITY_TYPES:
-            final_score = self._hybrid_score(llm_eval.score, sim_score, max_marks)
+            final_score = self._hybrid_score(
+                llm_score=llm_eval.score,
+                similarity=sim_score,
+                rubric_coverage=rubric_score,
+                keyword_coverage=keyword_score,
+                length_norm=length_score,
+                max_marks=max_marks,
+            )
         else:
             final_score = llm_eval.score   # LLM score only for non-similarity types
 
@@ -438,7 +485,9 @@ class EvaluationEngine:
             question_type=qtype.value,
             llm_score=llm_eval.score,
             similarity_score=round(sim_score, 4),
-            rubric_score=rubric_score,
+            rubric_score=round(rubric_score, 4),
+            keyword_score=round(keyword_score, 4),
+            length_score=round(length_score, 4),
             extracted_text=student_text,
             ocr_confidence=round(ocr_result.confidence, 3),
             ocr_engine=ocr_result.engine,
@@ -497,8 +546,77 @@ class EvaluationEngine:
     # Helpers
     # ─────────────────────────────────────────────────────
 
-    def _hybrid_score(self, llm_score: float, similarity: float, max_marks: float) -> float:
-        return (self.LLM_WEIGHT * llm_score) + (self.SIM_WEIGHT * similarity * max_marks)
+    def _hybrid_score(
+        self,
+        llm_score: float,
+        similarity: float,
+        rubric_coverage: float,
+        keyword_coverage: float,
+        length_norm: float,
+        max_marks: float,
+    ) -> float:
+        """
+        Hybrid scoring formula:
+          Final = max_marks × (
+            0.40 × (llm_score / max_marks)
+          + 0.25 × similarity
+          + 0.20 × rubric_coverage
+          + 0.10 × keyword_coverage
+          + 0.05 × length_norm
+          )
+        """
+        llm_ratio = (llm_score / max_marks) if max_marks > 0 else 0.0
+        combined = (
+            self.LLM_WEIGHT     * llm_ratio
+          + self.SIM_WEIGHT     * similarity
+          + self.RUBRIC_WEIGHT  * rubric_coverage
+          + self.KEYWORD_WEIGHT * keyword_coverage
+          + self.LENGTH_WEIGHT  * length_norm
+        )
+        return round(combined * max_marks, 2)
+
+    def _keyword_coverage(self, student_text: str, teacher_answer: str) -> float:
+        """
+        Compute the fraction of important teacher keywords present in the student answer.
+        Returns a float in [0.0, 1.0].
+        """
+        import re
+
+        def extract_keywords(text: str) -> set:
+            # Lowercase, strip punctuation, split into words
+            words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
+            # Basic stopword removal
+            stop = {
+                "the", "and", "are", "for", "that", "this", "with", "from",
+                "was", "not", "but", "can", "will", "also", "its", "used",
+                "has", "have", "been", "into", "than", "then", "which",
+                "when", "they", "some", "any", "each", "more", "very",
+            }
+            return {w for w in words if w not in stop}
+
+        teacher_kw  = extract_keywords(teacher_answer)
+        student_kw  = extract_keywords(student_text)
+
+        if not teacher_kw:
+            return 1.0
+
+        covered = len(teacher_kw & student_kw)
+        return round(min(1.0, covered / len(teacher_kw)), 4)
+
+    def _length_normalization(self, student_text: str, teacher_answer: str) -> float:
+        """
+        Rewards answers that are appropriately long relative to the teacher answer.
+        Score = 1.0 when student length ≥ 60% of teacher length.
+        Scales linearly from 0 at 0% to 1.0 at 60%+ coverage.
+        Returns a float in [0.0, 1.0].
+        """
+        student_len = len(student_text.split())
+        teacher_len = len(teacher_answer.split())
+        if teacher_len == 0:
+            return 1.0
+        ratio = student_len / teacher_len
+        # Reward up to 60% of teacher length (avoids penalizing concise correct answers)
+        return round(min(1.0, ratio / 0.6), 4)
 
     def _empty_result(self, max_marks: float, question_type: str, reason: str, elapsed: float) -> EvaluationResult:
         return EvaluationResult(

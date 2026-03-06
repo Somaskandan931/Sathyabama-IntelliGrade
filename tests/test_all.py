@@ -669,3 +669,138 @@ def run_all_tests():
 if __name__ == "__main__":
     success = run_all_tests()
     sys.exit(0 if success else 1)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW TESTS — Layout Detector, Diagram Detector, Updated Scoring
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestLayoutDetector:
+    """Tests for document layout detection (OpenCV fallback path)."""
+
+    def test_detect_returns_result(self, dummy_image_bytes):
+        from backend.layout_detector import LayoutDetector
+        detector = LayoutDetector()
+        result = detector.detect(dummy_image_bytes)
+        assert result is not None
+        assert result.page_width > 0
+        assert result.page_height > 0
+        assert result.detector_used in ("detectron2", "opencv_fallback")
+
+    def test_get_answer_crops_returns_list(self, dummy_image_bytes):
+        from backend.layout_detector import LayoutDetector
+        detector = LayoutDetector()
+        crops = detector.get_answer_crops(dummy_image_bytes)
+        assert isinstance(crops, list)
+        assert len(crops) >= 1
+
+    def test_pil_input_accepted(self):
+        from backend.layout_detector import LayoutDetector
+        from PIL import Image
+        img = Image.new("RGB", (200, 100), color=(255, 255, 255))
+        detector = LayoutDetector()
+        result = detector.detect(img)
+        assert result.page_width == 200
+        assert result.page_height == 100
+
+
+class TestDiagramDetector:
+    """Tests for diagram detection (heuristic fallback path)."""
+
+    def test_detect_plain_white_no_diagram(self):
+        from backend.diagram_detector import DiagramDetector
+        from PIL import Image
+        # A plain white image should not trigger diagram detection
+        img = Image.new("RGB", (200, 200), color=(255, 255, 255))
+        detector = DiagramDetector()
+        result = detector.detect(img)
+        assert result is not None
+        assert result.detector_used in ("yolov8", "heuristic_fallback")
+        assert isinstance(result.has_diagram, bool)
+
+    def test_detect_result_structure(self, dummy_image_bytes):
+        from backend.diagram_detector import DiagramDetector
+        detector = DiagramDetector()
+        result = detector.detect(dummy_image_bytes)
+        assert hasattr(result, "has_diagram")
+        assert hasattr(result, "diagrams")
+        assert hasattr(result, "n_diagrams")
+
+    def test_get_diagram_crops_returns_list(self, dummy_image_bytes):
+        from backend.diagram_detector import DiagramDetector
+        detector = DiagramDetector()
+        crops = detector.get_diagram_crops(dummy_image_bytes)
+        assert isinstance(crops, list)
+
+
+class TestUpdatedHybridScoring:
+    """Tests for the updated 5-factor hybrid scoring formula."""
+
+    def test_weights_sum_to_one(self):
+        from backend.evaluator import EvaluationEngine
+        e = EvaluationEngine.__new__(EvaluationEngine)
+        e.LLM_WEIGHT     = 0.40
+        e.SIM_WEIGHT     = 0.25
+        e.RUBRIC_WEIGHT  = 0.20
+        e.KEYWORD_WEIGHT = 0.10
+        e.LENGTH_WEIGHT  = 0.05
+        total = e.LLM_WEIGHT + e.SIM_WEIGHT + e.RUBRIC_WEIGHT + e.KEYWORD_WEIGHT + e.LENGTH_WEIGHT
+        assert abs(total - 1.0) < 1e-9
+
+    def test_hybrid_score_perfect(self):
+        from backend.evaluator import EvaluationEngine
+        e = EvaluationEngine.__new__(EvaluationEngine)
+        e.LLM_WEIGHT     = 0.40
+        e.SIM_WEIGHT     = 0.25
+        e.RUBRIC_WEIGHT  = 0.20
+        e.KEYWORD_WEIGHT = 0.10
+        e.LENGTH_WEIGHT  = 0.05
+        score = e._hybrid_score(
+            llm_score=10.0, similarity=1.0, rubric_coverage=1.0,
+            keyword_coverage=1.0, length_norm=1.0, max_marks=10.0
+        )
+        assert abs(score - 10.0) < 0.01
+
+    def test_hybrid_score_zero(self):
+        from backend.evaluator import EvaluationEngine
+        e = EvaluationEngine.__new__(EvaluationEngine)
+        e.LLM_WEIGHT     = 0.40
+        e.SIM_WEIGHT     = 0.25
+        e.RUBRIC_WEIGHT  = 0.20
+        e.KEYWORD_WEIGHT = 0.10
+        e.LENGTH_WEIGHT  = 0.05
+        score = e._hybrid_score(
+            llm_score=0.0, similarity=0.0, rubric_coverage=0.0,
+            keyword_coverage=0.0, length_norm=0.0, max_marks=10.0
+        )
+        assert score == 0.0
+
+    def test_keyword_coverage_full_match(self):
+        from backend.evaluator import EvaluationEngine
+        e = EvaluationEngine.__new__(EvaluationEngine)
+        score = e._keyword_coverage(
+            "gradient descent optimization algorithm learning rate converges",
+            "gradient descent optimization algorithm learning rate converges",
+        )
+        assert score == 1.0
+
+    def test_keyword_coverage_no_match(self):
+        from backend.evaluator import EvaluationEngine
+        e = EvaluationEngine.__new__(EvaluationEngine)
+        score = e._keyword_coverage("completely unrelated answer here", "gradient descent neural network")
+        assert 0.0 <= score < 0.5
+
+    def test_length_normalization_long_answer(self):
+        from backend.evaluator import EvaluationEngine
+        e = EvaluationEngine.__new__(EvaluationEngine)
+        teacher = "word " * 100
+        student = "word " * 80
+        score = e._length_normalization(student, teacher)
+        assert score == 1.0   # 80/100 = 0.8 ≥ 0.6 threshold → 1.0
+
+    def test_length_normalization_short_answer(self):
+        from backend.evaluator import EvaluationEngine
+        e = EvaluationEngine.__new__(EvaluationEngine)
+        teacher = "word " * 100
+        student = "word " * 10    # 10% of teacher
+        score = e._length_normalization(student, teacher)
+        assert score < 1.0

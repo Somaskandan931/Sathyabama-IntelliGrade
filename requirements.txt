@@ -10,15 +10,21 @@ safetensors>=0.4.1
 sentence-transformers==3.0.0
 accelerate==0.31.0
 
-# ── OCR — NO TESSERACT REQUIRED ───────────────────────────────────────────────
-# EasyOCR: primary OCR engine, CPU/GPU, good handwriting, no system deps
+# ── OCR — No Tesseract Required ───────────────────────────────────────────────
+# EasyOCR: primary OCR engine, CPU/GPU, no system deps
 easyocr==1.7.1
 # pdf2image: converts PDF pages to PIL Images for OCR (needs poppler)
 pdf2image==1.17.0
-# Poppler (Windows): pip install pdf2image then install poppler from:
-#   https://github.com/oschwartz10612/poppler-windows/releases
-#   Extract and add bin\ folder to PATH
 PyMuPDF==1.24.5
+
+# ── Document Layout Detection (Detectron2) ────────────────────────────────────
+# Detectron2 is installed separately (see README — platform-specific wheels):
+#   pip install detectron2 -f https://dl.fbaipublicfiles.com/detectron2/wheels/cpu/torch2.3/index.html
+# layoutparser wraps Detectron2 for document layout analysis:
+layoutparser[layoutmodels]==0.3.4
+
+# ── Diagram Detection (YOLOv8) ────────────────────────────────────────────────
+ultralytics==8.2.18
 
 # ── NLP ───────────────────────────────────────────────────────────────────────
 spacy==3.8.2
