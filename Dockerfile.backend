@@ -2,11 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System dependencies for OpenCV and Tesseract
-RUN apt-get update && apt-get install -y \
-    tesseract-ocr \
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-glx \
     libglib2.0-0 \
+    libgomp1 \
     poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
@@ -17,10 +17,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Download spaCy model
 RUN python -m spacy download en_core_web_sm
 
-# Copy source
-COPY backend/ ./backend/
-COPY prompts/ ./prompts/
-COPY .env.example ./.env
+# Copy application code
+COPY backend/    ./backend/
+COPY prompts/    ./prompts/
+COPY .env.example .env
+
+# Create upload directory
+RUN mkdir -p /app/uploads
+
+ENV PYTHONPATH=/app
+ENV UPLOAD_DIR=/app/uploads
 
 EXPOSE 8000
 
