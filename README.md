@@ -63,7 +63,7 @@ Image Preprocessing
      │
      ▼
 Layout Detection
-(Detectron2)
+(OpenCV)
      │
      ▼
 Answer Segmentation
@@ -104,7 +104,7 @@ Teacher Dashboard
 
 The IntelliGrade-H architecture processes scanned answer sheets through a multi-stage AI pipeline.
 
-First, the system preprocesses exam images using OpenCV to improve readability. Detectron2 then performs document layout analysis to identify question regions and answer blocks. These segmented answers are passed through an OCR ensemble consisting of TrOCR, EasyOCR, and Tesseract to extract handwritten text.
+First, the system preprocesses exam images using OpenCV to improve readability. OpenCV connected-components analysis then performs document layout detection to identify question regions and answer blocks. These segmented answers are passed through an OCR ensemble consisting of TrOCR, EasyOCR, and Tesseract to extract handwritten text.
 
 The extracted text is analyzed using NLP models. Sentence-BERT computes semantic similarity between student and reference answers, while DeBERTa evaluates rubric compliance. The LLM Examiner uses Groq (primary) or Claude (fallback) to generate professor-style feedback explaining strengths and missing concepts.
 
@@ -187,11 +187,13 @@ Operations include:
 * contrast enhancement
 * binarization
 
-### Detectron2
+### OpenCV — Layout Detection
 
-Detectron2 performs **document layout detection** to identify answer blocks, question numbers, and structural elements within exam sheets.
+In addition to image preprocessing, OpenCV performs **document layout detection** using connected-components analysis to identify answer blocks, question numbers, and structural elements within exam sheets.
 
-This allows the system to separate answers for different questions.
+This allows the system to separate answers for different questions without requiring any additional installation.
+
+> **Note:** Detectron2 is not supported on Windows. The system uses OpenCV as the active layout detector (`LAYOUT_DETECTOR=opencv_fallback` in `.env`), which handles standard answer sheet layouts reliably.
 
 ### YOLOv8
 
@@ -316,6 +318,9 @@ GROQ_MODEL=llama-3.3-70b-versatile
 
 ANTHROPIC_API_KEY=sk-ant-...               # https://console.anthropic.com
 CLAUDE_MODEL=claude-3-haiku-20240307
+
+# Layout Detection — use opencv_fallback on Windows (Detectron2 not supported)
+LAYOUT_DETECTOR=opencv_fallback            # opencv_fallback | auto | detectron2
 
 # Hybrid Scoring Weights (must sum to 1.0)
 LLM_WEIGHT=0.40
