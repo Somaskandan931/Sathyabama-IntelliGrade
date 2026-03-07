@@ -1,9 +1,9 @@
 """
 backend/llm_examiner.py
-LLM-based answer evaluation using the Google Gemini API.
+LLM-based answer evaluation using Groq (primary) or Claude (fallback).
 
 Loads the prompt template from prompts/evaluation_prompt.txt, sends it
-to Gemini, and parses the structured JSON response.
+to the LLM via llm_provider, and parses the structured JSON response.
 """
 
 from __future__ import annotations
@@ -16,14 +16,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-import google.generativeai as genai
-
 from backend.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "evaluation_prompt.txt"
+
+DEFAULT_PROMPT_TEMPLATE = (
+    "You are an expert university professor evaluating a student's handwritten answer.\n\n"
+    "QUESTION:\n{question}\n\n"
+    "MODEL ANSWER (written by teacher):\n{teacher_answer}\n\n"
+    "STUDENT ANSWER:\n{student_answer}\n\n"
+    "MAXIMUM MARKS: {max_marks}\n\n"
+    "RUBRIC:\n{rubric}\n\n"
+    "Respond ONLY with valid JSON (no markdown):\n"
+    '{"llm_score": <float 0-max_marks>, "confidence": <float 0-1>, '
+    '"strengths": [<strings>], "missing_concepts": [<strings>], "feedback": "<string>"}'
+)
 
 
 @dataclass
@@ -39,18 +49,25 @@ class LLMEvaluation:
 
 
 class LLMExaminer:
-    """Evaluates student answers using Gemini."""
+    """Evaluates student answers using Groq (primary) or Claude (fallback)."""
 
     def __init__(self):
-        if not settings.gemini_api_key:
+        if not settings.groq_api_key and not settings.anthropic_api_key:
             raise ValueError(
-                "GEMINI_API_KEY is not set. Add it to your .env file."
+                "No LLM API key set. Add GROQ_API_KEY or ANTHROPIC_API_KEY to your .env file."
             )
-        genai.configure(api_key=settings.gemini_api_key)
-        self._model = genai.GenerativeModel(settings.gemini_model)
-        self._prompt_template = PROMPT_PATH.read_text(encoding="utf-8")
+        from backend.llm_provider import LLMClient
+        self._client = LLMClient.from_env()
+        logger.info("LLMExaminer ready — active provider: %s", self._client.active_provider)
 
-    # ── Public API ────────────────────────────────────────────────────────────
+        # Load prompt template, fall back to inline default if file missing
+        if PROMPT_PATH.exists():
+            self._prompt_template = PROMPT_PATH.read_text(encoding="utf-8")
+        else:
+            logger.warning("Prompt file not found at %s — using inline default.", PROMPT_PATH)
+            self._prompt_template = DEFAULT_PROMPT_TEMPLATE
+
+    # ── Public API ─────────────────────────────────────────────────────────────
     def evaluate(
         self,
         question: str,
@@ -60,7 +77,7 @@ class LLMExaminer:
         max_marks: float = 10.0,
     ) -> LLMEvaluation:
         """
-        Send the evaluation prompt to Gemini and parse the response.
+        Send the evaluation prompt to the LLM and parse the structured response.
 
         Args:
             question: Exam question text.
@@ -85,26 +102,19 @@ class LLMExaminer:
 
         t0 = time.perf_counter()
         try:
-            response = self._model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.1,      # low temperature → consistent grading
-                    max_output_tokens=1024,
-                ),
-            )
+            response = self._client.generate(prompt)
             raw = response.text
         except Exception as exc:
-            logger.error("Gemini API error: %s", exc)
+            logger.error("LLM API error: %s", exc)
             raise
 
         latency = time.perf_counter() - t0
         return self._parse(raw, max_marks, latency)
 
-    # ── Internal ──────────────────────────────────────────────────────────────
+    # ── Internal ───────────────────────────────────────────────────────────────
     @staticmethod
     def _parse(raw: str, max_marks: float, latency: float) -> LLMEvaluation:
         """Extract JSON from raw LLM output and populate LLMEvaluation."""
-        # Strip markdown fences if present
         cleaned = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
         try:
             data = json.loads(cleaned)
@@ -138,7 +148,7 @@ def _extract_json_fallback(text: str) -> dict:
     return {}
 
 
-# ── Module-level singleton ────────────────────────────────────────────────────
+# ── Module-level singleton ─────────────────────────────────────────────────────
 _examiner: Optional[LLMExaminer] = None
 
 

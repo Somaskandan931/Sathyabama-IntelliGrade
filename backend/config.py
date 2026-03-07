@@ -23,15 +23,11 @@ SECRET_KEY  = os.getenv("SECRET_KEY", "change-me-in-production")
 # ── Database ───────────────────────────────────────────────────────────────
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/intelligrade.db")
 
-# ── LLM Providers ──────────────────────────────────────────────────────────
-GEMINI_API_KEY    = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL      = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+# ── LLM Providers (Groq primary, Claude fallback) ──────────────────────────
 GROQ_API_KEY      = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL        = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL      = os.getenv("CLAUDE_MODEL", "claude-3-haiku-20240307")
-OLLAMA_BASE_URL   = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL      = os.getenv("OLLAMA_MODEL", "llama3:latest")
 
 # ── OCR ────────────────────────────────────────────────────────────────────
 # Options: "easyocr" | "trocr" | "ensemble"
@@ -79,14 +75,10 @@ from functools import lru_cache
 
 @dataclass
 class Settings:
-    gemini_api_key: str = GEMINI_API_KEY
-    gemini_model: str = GEMINI_MODEL
     groq_api_key: str = GROQ_API_KEY
     groq_model: str = GROQ_MODEL
     anthropic_api_key: str = ANTHROPIC_API_KEY
     claude_model: str = CLAUDE_MODEL
-    ollama_base_url: str = OLLAMA_BASE_URL
-    ollama_model: str = OLLAMA_MODEL
     ocr_engine: str = OCR_ENGINE
     trocr_model_path: str = TROCR_MODEL_PATH
     sbert_model: str = SBERT_MODEL

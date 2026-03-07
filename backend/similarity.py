@@ -30,7 +30,8 @@ class SemanticSimilarityModel:
     DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
     def __init__(self, model_name: Optional[str] = None):
-        self._model_name = model_name or self.DEFAULT_MODEL
+        import os
+        self._model_name = model_name or os.getenv("SBERT_MODEL", self.DEFAULT_MODEL)
         self._model = None
 
     def _load(self):

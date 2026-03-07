@@ -21,6 +21,9 @@ from unittest.mock import MagicMock, patch
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
@@ -402,9 +405,12 @@ class TestEvaluationEngine(unittest.TestCase):
 
     def setUp(self):
         self.engine = EvaluationEngine(
-            ocr_engine="easyocr",
-            llm_weight=0.6,
-            similarity_weight=0.4
+            ocr_engine=os.getenv("OCR_ENGINE", "easyocr"),
+            llm_weight=float(os.getenv("LLM_WEIGHT", "0.40")),
+            similarity_weight=float(os.getenv("SIMILARITY_WEIGHT", "0.25")),
+            rubric_weight=float(os.getenv("RUBRIC_WEIGHT", "0.20")),
+            keyword_weight=float(os.getenv("KEYWORD_WEIGHT", "0.10")),
+            length_weight=float(os.getenv("LENGTH_WEIGHT", "0.05")),
         )
 
     def test_mcq_evaluation(self):

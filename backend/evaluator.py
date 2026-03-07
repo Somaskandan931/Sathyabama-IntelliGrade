@@ -142,7 +142,6 @@ class EvaluationEngine:
             ocr_engine: str = "easyocr",
             trocr_model_path: Optional[str] = None,
             similarity_model: Optional[str] = None,
-            gemini_api_key: Optional[str] = None,
             llm_weight: float = 0.40,
             similarity_weight: float = 0.25,
             rubric_weight: float = 0.20,
@@ -164,16 +163,12 @@ class EvaluationEngine:
         self.text_processor = TextProcessor()
         self.similarity_model = SemanticSimilarityModel( _sbert_model )
 
-        # Initialize LLM evaluator with API key
-        if gemini_api_key :
-            self.llm_evaluator = LLMEvaluator( api_key=gemini_api_key )
-        else :
-            api_key = os.getenv( "GEMINI_API_KEY" )
-            self.llm_evaluator = LLMEvaluator( api_key=api_key )
+        # Initialize LLM evaluator — uses Groq (primary) or Claude (fallback) from .env
+        self.llm_evaluator = LLMEvaluator()
 
         self.rubric_matcher   = RubricMatcher() if use_rubric else None
-        self.layout_detector  = LayoutDetector()      # Detectron2 / OpenCV fallback
-        self.diagram_detector = DiagramDetector()     # YOLOv8 / heuristic fallback
+        self.layout_detector  = LayoutDetector()
+        self.diagram_detector = DiagramDetector()
         self._classifier = None  # lazy-init to avoid circular imports
 
         logger.info( "EvaluationEngine initialized with LLM provider: %s",

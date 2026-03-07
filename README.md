@@ -85,7 +85,7 @@ Evaluation Engine
  ├ Semantic Similarity (Sentence-BERT)
  ├ Rubric Matcher (DeBERTa)
  ├ Keyword Coverage
- └ LLM Examiner (Gemini)
+ └ LLM Examiner (Groq / Claude)
      │
      ▼
 Hybrid Scoring Engine
@@ -97,14 +97,16 @@ Feedback Generator
 Teacher Dashboard
 (Streamlit)
 ```
+
 <p align="center">
   <img src="assets/ChatGPT Image Mar 6, 2026, 11_19_15 AM.png" alt="System Architecture" width="800"/>
 </p>
+
 The IntelliGrade-H architecture processes scanned answer sheets through a multi-stage AI pipeline.
 
 First, the system preprocesses exam images using OpenCV to improve readability. Detectron2 then performs document layout analysis to identify question regions and answer blocks. These segmented answers are passed through an OCR ensemble consisting of TrOCR, EasyOCR, and Tesseract to extract handwritten text.
 
-The extracted text is analyzed using NLP models. Sentence-BERT computes semantic similarity between student and reference answers, while DeBERTa evaluates rubric compliance. Gemini generates professor-style feedback explaining strengths and missing concepts.
+The extracted text is analyzed using NLP models. Sentence-BERT computes semantic similarity between student and reference answers, while DeBERTa evaluates rubric compliance. The LLM Examiner uses Groq (primary) or Claude (fallback) to generate professor-style feedback explaining strengths and missing concepts.
 
 All evaluation signals are combined in a hybrid scoring engine that produces the final grade. Results are presented to instructors through an interactive Streamlit dashboard and accessible via a FastAPI backend.
 
@@ -125,6 +127,7 @@ Final Score =
 
 This multi-factor scoring system improves fairness and better approximates **human grading behavior**.
 
+---
 
 # Technology Stack
 
@@ -145,6 +148,28 @@ Sentence-BERT generates semantic embeddings of student and teacher answers, allo
 ### DeBERTa
 
 DeBERTa is used for **rubric-based evaluation** by performing natural language inference between rubric criteria and student answers.
+
+---
+
+## LLM Providers
+
+IntelliGrade-H uses a multi-provider LLM setup with automatic fallback. The active provider chain is:
+
+**Groq → Claude → Rule-Based Fallback**
+
+### Groq (Primary)
+
+Groq runs `llama-3.3-70b-versatile` and serves as the primary LLM provider. It offers fast inference speeds suitable for real-time grading workflows. Set `GROQ_API_KEY` in your `.env` file.
+
+### Claude (Fallback)
+
+Anthropic's Claude (`claude-3-haiku-20240307`) acts as the quality fallback when Groq is unavailable. It generates detailed professor-style feedback with high accuracy. Set `ANTHROPIC_API_KEY` in your `.env` file.
+
+### Rule-Based Fallback
+
+If both cloud providers are unavailable, the system falls back to a deterministic rule-based evaluator to ensure grading is never fully blocked.
+
+To pin a specific provider, set `LLM_PROVIDER=groq` or `LLM_PROVIDER=claude` in your `.env` file.
 
 ---
 
@@ -243,11 +268,15 @@ IntelliGrade-H
 ├── backend
 │   ├── api.py
 │   ├── evaluator.py
+│   ├── llm_provider.py
+│   ├── llm_evaluator.py
+│   ├── llm_examiner.py
 │   ├── ocr_module.py
 │   ├── preprocessor.py
 │   ├── similarity.py
 │   ├── rubric_matcher.py
 │   ├── question_classifier.py
+│   ├── config.py
 │   ├── metrics.py
 │
 ├── frontend
@@ -262,11 +291,38 @@ IntelliGrade-H
 ├── tests
 │   └── test_all.py
 │
+├── prompts
+│   └── evaluation_prompt.txt
+│
 ├── uploads
 │
+├── .env
 ├── requirements.txt
 ├── docker-compose.yml
 └── README.md
+```
+
+---
+
+# Configuration
+
+All settings are loaded from a `.env` file in the project root. The minimum required keys are:
+
+```env
+# LLM Providers — at least one is required
+LLM_PROVIDER=groq                          # groq | claude | auto
+GROQ_API_KEY=gsk_...                       # https://console.groq.com
+GROQ_MODEL=llama-3.3-70b-versatile
+
+ANTHROPIC_API_KEY=sk-ant-...               # https://console.anthropic.com
+CLAUDE_MODEL=claude-3-haiku-20240307
+
+# Hybrid Scoring Weights (must sum to 1.0)
+LLM_WEIGHT=0.40
+SIMILARITY_WEIGHT=0.25
+RUBRIC_WEIGHT=0.20
+KEYWORD_WEIGHT=0.10
+LENGTH_WEIGHT=0.05
 ```
 
 ---
@@ -372,4 +428,3 @@ Possible research directions include:
 * explainable AI in educational assessment
 * multimodal document understanding
 * human-AI collaborative grading systems
-

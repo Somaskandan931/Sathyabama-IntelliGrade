@@ -1,12 +1,14 @@
 """
-IntelliGrade-H - Multi-Provider LLM Client (v4)
-=================================================
-Complete implementation with:
-- Robust error handling and retries
-- Provider health checking
-- Cost tracking and explainability
-- Graceful degradation with rule-based fallback
-- Support for all providers: Gemini, Claude, Groq, Ollama
+IntelliGrade-H - Multi-Provider LLM Client
+============================================
+Evaluates student answers using cloud LLM providers with automatic fallback.
+
+Provider priority (auto mode):
+  1. Groq   — primary   (GROQ_API_KEY      in .env)
+  2. Claude — fallback  (ANTHROPIC_API_KEY in .env)
+  3. RuleBasedFallback — offline safety net (no API key needed)
+
+Set LLM_PROVIDER=groq|claude in .env to pin a specific provider.
 """
 
 import os
@@ -17,8 +19,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-import urllib.request
-import urllib.error
 
 logger = logging.getLogger(__name__)
 
@@ -95,133 +95,6 @@ class BaseLLMProvider:
             "error_count": self._error_count,
             "last_error": str(self._last_error) if self._last_error else None
         }
-
-
-# ============================================================================
-# Gemini Provider
-# ============================================================================
-
-class GeminiProvider(BaseLLMProvider):
-    """Google Gemini API provider"""
-
-    DEFAULT_MODEL = "gemini-2.0-flash"
-    MODELS = {
-        "gemini-2.0-flash":     {"input_cost": 0.000100, "output_cost": 0.000400},
-        "gemini-2.0-flash-lite":{"input_cost": 0.000075, "output_cost": 0.000300},
-        "gemini-1.5-flash":     {"input_cost": 0.000375, "output_cost": 0.001250},
-        "gemini-1.5-pro":       {"input_cost": 0.002500, "output_cost": 0.007500},
-    }
-
-    def __init__(self, api_key: str, model: Optional[str] = None):
-        super().__init__("gemini")
-        self.api_key = api_key
-        self.model = model or os.getenv("GEMINI_MODEL", self.DEFAULT_MODEL)
-        self._client = None
-        self._cost_config = self.MODELS.get(self.model, self.MODELS[self.DEFAULT_MODEL])
-
-    def _get_client(self):
-        """Lazy initialize Gemini client"""
-        if self._client is None and self._validate_api_key():
-            try:
-                import google.generativeai as genai
-                genai.configure(api_key=self.api_key)
-                self._client = genai.GenerativeModel(
-                    model_name=self.model,
-                    generation_config={
-                        "temperature": 0.2,
-                        "top_p": 0.95,
-                        "max_output_tokens": 2048,
-                    },
-                )
-                logger.info("✅ Gemini client ready: %s", self.model)
-            except ImportError:
-                logger.error("google-generativeai not installed")
-            except Exception as e:
-                logger.error("Failed to initialize Gemini: %s", e)
-                self._last_error = e
-        return self._client
-
-    def _validate_api_key(self) -> bool:
-        """Validate API key format"""
-        if not self.api_key or self.api_key in ("", "your_gemini_api_key_here"):
-            return False
-        # Gemini API keys typically start with "AIza"
-        if not self.api_key.startswith("AIza"):
-            logger.warning("Gemini API key should start with 'AIza'")
-        return True
-
-    def is_available(self) -> bool:
-        """Check if Gemini is available"""
-        if not self._validate_api_key():
-            return False
-
-        client = self._get_client()
-        if not client:
-            return False
-
-        try:
-            # Simple test call
-            response = client.generate_content("test")
-            return True
-        except Exception as e:
-            self._last_error = e
-            return False
-
-    def generate(self, prompt: str) -> LLMResponse:
-        """Generate response using Gemini"""
-        start = time.time()
-        client = self._get_client()
-
-        if not client:
-            raise Exception("Gemini client not available")
-
-        try:
-            response = client.generate_content(prompt)
-
-            # Extract text from response
-            if hasattr(response, 'text'):
-                text = response.text
-            elif hasattr(response, 'parts'):
-                text = ''.join(part.text for part in response.parts)
-            else:
-                text = str(response)
-
-            latency = (time.time() - start) * 1000
-
-            # Estimate tokens (Gemini doesn't return counts)
-            words = len(text.split())
-            estimated_prompt_tokens = len(prompt.split()) * 1.3
-            estimated_completion_tokens = words * 1.3
-
-            # Calculate cost
-            input_cost = (estimated_prompt_tokens / 1000) * self._cost_config["input_cost"]
-            output_cost = (estimated_completion_tokens / 1000) * self._cost_config["output_cost"]
-
-            self._success_count += 1
-
-            return LLMResponse(
-                text=text,
-                provider="gemini",
-                model=self.model,
-                prompt_tokens=int(estimated_prompt_tokens),
-                completion_tokens=int(estimated_completion_tokens),
-                latency_ms=round(latency, 2),
-                cost_estimate=round(input_cost + output_cost, 6),
-            )
-
-        except Exception as e:
-            self._error_count += 1
-            self._last_error = e
-            logger.error("Gemini API error: %s", e)
-
-            # Check for specific error types
-            error_str = str(e).lower()
-            if "api key" in error_str or "invalid" in error_str:
-                raise Exception("Invalid Gemini API key")
-            elif "quota" in error_str or "limit" in error_str:
-                raise Exception("Gemini quota exceeded")
-            else:
-                raise
 
 
 # ============================================================================
@@ -445,98 +318,6 @@ class GroqProvider(BaseLLMProvider):
 
 
 # ============================================================================
-# Ollama Provider (Local)
-# ============================================================================
-
-class OllamaProvider(BaseLLMProvider):
-    """Local Ollama provider (offline)"""
-
-    def __init__(self, base_url: Optional[str] = None, model: Optional[str] = None):
-        super().__init__("ollama")
-        self.base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.model = model or os.getenv("OLLAMA_MODEL", "llama3:latest")
-        logger.info("✅ Ollama provider configured: %s with model %s", self.base_url, self.model)
-
-    def is_available(self) -> bool:
-        """Check if Ollama is running locally"""
-        try:
-            req = urllib.request.Request(
-                f"{self.base_url}/api/tags",
-                method="GET",
-                headers={"Content-Type": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                data = json.loads(resp.read().decode())
-                # Check if our model is available
-                models = [m["name"] for m in data.get("models", [])]
-                if self.model not in models:
-                    logger.warning(f"Model {self.model} not found in Ollama. Available: {models}")
-                return True
-        except Exception as e:
-            logger.debug("Ollama not available: %s", e)
-            return False
-
-    def generate(self, prompt: str) -> LLMResponse:
-        """Generate response using local Ollama"""
-        start = time.time()
-
-        # Enhanced prompt for better explainability
-        enhanced_prompt = (
-            "You are an expert university professor evaluating student handwritten answers. "
-            "Provide detailed reasoning for your evaluation in JSON format.\n\n" + prompt
-        )
-
-        payload = json.dumps({
-            "model": self.model,
-            "prompt": enhanced_prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.2,
-                "num_predict": 2048,
-                "top_k": 40,
-                "top_p": 0.9,
-            },
-        }).encode()
-
-        req = urllib.request.Request(
-            f"{self.base_url}/api/generate",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = json.loads(resp.read().decode())
-
-            text = data.get("response", "")
-            latency = (time.time() - start) * 1000
-
-            # Estimate tokens
-            estimated_tokens = len(text.split()) * 1.3
-
-            self._success_count += 1
-
-            return LLMResponse(
-                text=text,
-                provider="ollama",
-                model=self.model,
-                prompt_tokens=int(estimated_tokens * 0.7),
-                completion_tokens=int(estimated_tokens * 0.3),
-                latency_ms=round(latency, 2),
-                cost_estimate=0.0,  # Free for local models
-            )
-
-        except urllib.error.URLError as e:
-            self._error_count += 1
-            self._last_error = e
-            raise Exception(f"Ollama connection failed: {e}")
-        except Exception as e:
-            self._error_count += 1
-            self._last_error = e
-            raise
-
-
-# ============================================================================
 # Rule-Based Fallback Provider
 # ============================================================================
 
@@ -720,7 +501,6 @@ class LLMClient:
     def from_env(cls) -> "LLMClient":
         """Create client from environment variables"""
         anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
-        gemini_key = os.getenv("GEMINI_API_KEY", "")
         groq_key = os.getenv("GROQ_API_KEY", "")
         preference = os.getenv("LLM_PROVIDER", "auto").lower()
 
@@ -733,27 +513,13 @@ class LLMClient:
             except Exception as e:
                 logger.warning(f"Failed to initialize {provider_class.__name__}: {e}")
 
-        # Build provider list based on preference
-        if preference == "gemini":
-            add_provider(GeminiProvider, gemini_key)
+        # Supported providers: groq (primary), claude (fallback)
+        if preference == "claude":
             add_provider(ClaudeProvider, anthropic_key)
             add_provider(GroqProvider, groq_key)
-        elif preference == "claude":
-            add_provider(ClaudeProvider, anthropic_key)
-            add_provider(GeminiProvider, gemini_key)
-            add_provider(GroqProvider, groq_key)
-        elif preference == "groq":
+        else:  # auto or groq — Groq primary, Claude quality fallback
             add_provider(GroqProvider, groq_key)
             add_provider(ClaudeProvider, anthropic_key)
-            add_provider(GeminiProvider, gemini_key)
-        elif preference == "ollama":
-            add_provider(OllamaProvider)
-            add_provider(GroqProvider, groq_key)  # Fallback to cloud
-        else:  # auto - priority matches .env: Gemini primary, Groq second, Claude third, Ollama offline
-            add_provider(GeminiProvider, gemini_key)     # Primary — key set in .env
-            add_provider(GroqProvider, groq_key)         # Fast fallback
-            add_provider(ClaudeProvider, anthropic_key)  # Quality fallback
-            add_provider(OllamaProvider)                  # Offline last resort
 
         # Always add rule-based as final safety net
         providers.append(RuleBasedFallbackProvider())

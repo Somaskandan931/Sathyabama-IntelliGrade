@@ -91,11 +91,18 @@ class LayoutDetector:
         score_threshold: float = 0.5,
         use_gpu: bool = False,
     ):
+        import os
         self._score_threshold = score_threshold
         self._use_gpu = use_gpu
+        self._layout_mode = os.getenv("LAYOUT_DETECTOR", "auto")  # "auto" | "detectron2" | "opencv_fallback"
         self._model = None
         self._lp_available = False
-        self._try_load_layoutparser()
+        # If explicitly set to opencv_fallback, skip trying to load layoutparser
+        if self._layout_mode != "opencv_fallback":
+            self._try_load_layoutparser()
+        else:
+            import logging
+            logging.getLogger(__name__).info("LAYOUT_DETECTOR=opencv_fallback — skipping Detectron2 load.")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Public API

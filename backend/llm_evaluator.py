@@ -86,15 +86,7 @@ class LLMEvaluator:
 
     def _get_client(self):
         if self._client is None:
-            import os
             from backend.llm_provider import LLMClient
-
-            # Set environment variables if provided
-            if self._api_key:
-                os.environ.setdefault("GEMINI_API_KEY", self._api_key)
-            if self._model_name:
-                os.environ.setdefault("GEMINI_MODEL", self._model_name)
-
             self._client = LLMClient.from_env()
             logger.info("LLMEvaluator using: %s", self._client.active_provider)
         return self._client

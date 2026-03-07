@@ -6,6 +6,9 @@ Full drag-and-drop. Professional design. REST API backend.
 import streamlit as st
 import os, json, requests
 import pandas as pd
+from dotenv import load_dotenv
+
+load_dotenv()
 
 API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
 
