@@ -1,0 +1,85 @@
+# ─────────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.so
+.Python
+venv/
+env/
+.env
+*.egg-info/
+dist/
+build/
+
+# ─────────────────────────────────────────────
+# App data
+# ─────────────────────────────────────────────
+uploads/
+*.db
+*.sqlite3
+intelligrade.db
+
+# ─────────────────────────────────────────────
+# Models (large files — use DVC or store separately)
+# ─────────────────────────────────────────────
+models/trocr-finetuned/
+models/*.bin
+models/*.safetensors
+models/*.pt
+models/*.ckpt
+
+# EasyOCR model cache (downloaded on first run, ~200 MB)
+~/.EasyOCR/
+
+# SentenceTransformer / HuggingFace cache
+~/.cache/huggingface/
+~/.cache/torch/
+
+# ─────────────────────────────────────────────
+# Datasets (large — upload to Drive/Kaggle separately)
+# ─────────────────────────────────────────────
+datasets/raw/
+datasets/handwriting/
+datasets/*.zip
+
+# ─────────────────────────────────────────────
+# Logs
+# ─────────────────────────────────────────────
+logs/
+*.log
+
+# ─────────────────────────────────────────────
+# Notebooks (checkpoints only — commit .ipynb files)
+# ─────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ─────────────────────────────────────────────
+# IDE
+# ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+
+# ─────────────────────────────────────────────
+# OS
+# ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─────────────────────────────────────────────
+# Testing
+# ─────────────────────────────────────────────
+.pytest_cache/
+htmlcov/
+.coverage
+
+# ─────────────────────────────────────────────
+# Docker
+# ─────────────────────────────────────────────
+postgres_data/
+
+# ─────────────────────────────────────────────
+# spaCy downloaded models (reinstall via: python -m spacy download en_core_web_sm)
+# ─────────────────────────────────────────────
+en_core_web_sm/
