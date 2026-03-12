@@ -129,9 +129,18 @@ Respond ONLY with valid JSON (no markdown, no extra text):
         prompt = self.CLASSIFY_PROMPT.format(question=question)
 
         try:
+            # _llm is LLMEvaluator; get its underlying LLMClient
             client = self._llm._get_client()
             response = client.generate(prompt)
             raw = response.text
+        except AttributeError:
+            # fallback: _llm might already be an LLMClient
+            try:
+                response = self._llm.generate(prompt)  # type: ignore
+                raw = response.text
+            except Exception as e:
+                logger.warning("LLM call failed: %s", e)
+                return None
         except Exception as e:
             logger.warning("LLM call failed: %s", e)
             return None

@@ -54,6 +54,12 @@ class SemanticSimilarityModel:
         Returns cosine similarity between student and teacher embeddings.
         Score range: 0.0 (unrelated) to 1.0 (identical meaning).
         """
+        # Guard: return 0 for empty inputs to avoid encoding empty strings
+        if not student_answer or not student_answer.strip():
+            return SimilarityResult(score=0.0, student_embedding=[], teacher_embedding=[])
+        if not teacher_answer or not teacher_answer.strip():
+            return SimilarityResult(score=0.0, student_embedding=[], teacher_embedding=[])
+
         self._load()
         from sentence_transformers import util
 

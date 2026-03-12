@@ -95,7 +95,7 @@ class ImagePreprocessor:
         if w < _MIN_WIDTH_PX:
             scale = _MIN_WIDTH_PX / w
             nw, nh = int(w * scale), int(h * scale)
-            img = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_CUBIC)
+            img = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LANCZOS4)
             logger.debug("Upscaled %dx%d → %dx%d", w, h, nw, nh)
         return img
 

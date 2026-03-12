@@ -1,6 +1,7 @@
 """
 IntelliGrade-H - LLM Evaluator Module
-Evaluates student answers using Gemini 2.5 Flash (primary) or Groq/Llama (fallback).
+Evaluates student answers using Groq (llama-3.3-70b-versatile).
+Falls back to an offline heuristic when Groq is unavailable.
 
 Supports all question types:
   - open_ended   : full professor-style rubric evaluation
@@ -46,13 +47,39 @@ class ExplanationDetail:
     def __getattr__(self, name):
         return None
 
-from prompts.evaluation_prompts import (
-    STANDARD_PROMPT,
-    CS_ENGINEERING_PROMPT,
-    RUBRIC_PROMPT,
-    STRICT_PROMPT,
-    MCQ_VALIDATION_PROMPT,
-)
+try:
+    try:
+        from backend.evaluation_prompts import (
+            STANDARD_PROMPT, CS_ENGINEERING_PROMPT,
+            RUBRIC_PROMPT, STRICT_PROMPT, MCQ_VALIDATION_PROMPT,
+        )
+    except ImportError:
+        from evaluation_prompts import (
+            STANDARD_PROMPT, CS_ENGINEERING_PROMPT,
+            RUBRIC_PROMPT, STRICT_PROMPT, MCQ_VALIDATION_PROMPT,
+        )
+except ImportError:
+    # Inline fallbacks — works even without the prompts/ directory
+    STANDARD_PROMPT = (
+        "You are a university professor grading an exam.\n\n"
+        "QUESTION:\n{question}\n\nREFERENCE ANSWER:\n{teacher_answer}\n\n"
+        "STUDENT ANSWER:\n{student_answer}\n\nMAXIMUM MARKS: {max_marks}\n\n"
+        "Respond ONLY with valid JSON (no markdown):\n"
+        '{{"score": <float 0-{max_marks}>, "confidence": <float 0-1>, '
+        '"strengths": [], "missing_concepts": [], "feedback": "<feedback>"}}'
+    )
+    CS_ENGINEERING_PROMPT = STANDARD_PROMPT
+    STRICT_PROMPT         = STANDARD_PROMPT
+    MCQ_VALIDATION_PROMPT = STANDARD_PROMPT
+    RUBRIC_PROMPT = (
+        "You are a university professor grading an exam.\n\n"
+        "QUESTION:\n{question}\n\nREFERENCE ANSWER:\n{teacher_answer}\n\n"
+        "STUDENT ANSWER:\n{student_answer}\n\nMAXIMUM MARKS: {max_marks}\n\n"
+        "RUBRIC:\n{rubric_items}\n\n"
+        "Respond ONLY with valid JSON (no markdown):\n"
+        '{{"score": <float 0-{max_marks}>, "confidence": <float 0-1>, '
+        '"strengths": [], "missing_concepts": [], "feedback": "<feedback>"}}'
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -147,11 +174,11 @@ class LLMEvaluator:
                 return LLMEvaluation(
                     score=score,
                     max_marks=max_marks,
-                    strengths=data.get("strengths", []),
-                    missing_concepts=data.get("missing_concepts", []),
+                    strengths=data.get("strengths", []) if isinstance(data.get("strengths"), list) else [],
+                    missing_concepts=data.get("missing_concepts", []) if isinstance(data.get("missing_concepts"), list) else [],
                     feedback=data.get("feedback", "No feedback generated."),
                     explanation=ExplanationDetail(data.get("explanation", data.get("feedback", ""))),
-                    confidence=float(data.get("confidence", 0.7)),
+                    confidence=max(0.0, min(1.0, float(data.get("confidence", 0.7)))),
                     provider=provider_name,
                     model=model_name,
                     rubric_breakdown=data.get("rubric_breakdown"),
@@ -291,57 +318,6 @@ Respond ONLY with valid JSON (no markdown, no extra text):
             student_answer=student_answer,
             max_marks=max_marks,
         )
-
-    def _build_enhanced_prompt(
-        self,
-        question: str,
-        student_answer: str,
-        teacher_answer: str,
-        max_marks: float = 10.0,
-        rubric: Optional[str] = None,
-        rubric_criteria: Optional[list] = None,
-    ) -> str:
-        """
-        Enhanced evaluation prompt that produces score + feedback + explanation.
-        Used by explainability tests and any caller that needs a detailed breakdown.
-
-        Accepts either a pre-formatted rubric string (rubric=) or a list of
-        criterion dicts (rubric_criteria=) — both produce the same output.
-        """
-        rubric_text = ""
-        if rubric:
-            rubric_text = f"\nRUBRIC:\n{rubric}\n"
-        elif rubric_criteria:
-            rubric_text = self._rubric_section(rubric_criteria)
-
-        return f"""You are a university professor grading an exam.
-
-QUESTION:
-{question}
-
-REFERENCE ANSWER (model answer written by the teacher):
-{teacher_answer}
-
-STUDENT ANSWER:
-{student_answer}
-
-MAXIMUM MARKS: {max_marks}
-{rubric_text}
-EVALUATION GUIDELINES:
-1. Compare the student answer against the reference answer for conceptual accuracy.
-2. Give partial credit proportional to understanding demonstrated.
-3. Do NOT penalise OCR spelling errors — focus on concepts.
-4. Provide a clear explanation of why the score was awarded.
-
-Respond ONLY with valid JSON (no markdown, no extra text):
-{{
-  "score": <float between 0 and {max_marks}>,
-  "confidence": <float 0–1>,
-  "strengths": [<list of strings: what the student did well>],
-  "missing_concepts": [<list of strings: key concepts not covered>],
-  "feedback": "<constructive paragraph for the student>",
-  "explanation": "<one-paragraph rationale explaining the score awarded>"
-}}"""
 
     def _build_short_answer_prompt(self, question, teacher_answer, student_answer, max_marks, rubric_criteria) -> str:
         return f"""You are grading a short-answer question. Expected response is 1-3 sentences.

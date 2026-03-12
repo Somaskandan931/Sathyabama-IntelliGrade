@@ -1,67 +1,128 @@
-# ── Web Framework ─────────────────────────────────────────────────────────────
-fastapi==0.109.2
-uvicorn[standard]==0.27.1
-python-multipart==0.0.9
+# ══════════════════════════════════════════════════════════════════
+# IntelliGrade-H — requirements.txt
+# ══════════════════════════════════════════════════════════════════
+# Install everything:   pip install -r requirements.txt
+#
+# Sections:
+#   1. Web API & server
+#   2. Database
+#   3. PDF extraction (typed PDFs — always install)
+#   4. OCR engines     (scanned PDFs — install what you can)
+#   5. AI / LLM
+#   6. Computer Vision
+#   7. NLP & similarity
+#   8. Data & utilities
+#   9. Frontend dashboard
+# ══════════════════════════════════════════════════════════════════
 
-# ── Machine Learning ──────────────────────────────────────────────────────────
-torch==2.3.0
-transformers==4.41.2
-safetensors>=0.4.1
-sentence-transformers==3.0.0
-accelerate==0.31.0
 
-# ── OCR — No Tesseract Required ───────────────────────────────────────────────
-# EasyOCR: primary OCR engine, CPU/GPU, no system deps
-easyocr==1.7.1
-# pdf2image: converts PDF pages to PIL Images for OCR (needs poppler)
-pdf2image==1.17.0
-PyMuPDF==1.24.5
+# ── 1. Web API & server ───────────────────────────────────────────
+fastapi
+uvicorn[standard]
+python-multipart
+aiofiles
+requests
+httpx
 
-# ── Document Layout Detection (Detectron2) ────────────────────────────────────
-# Detectron2 is installed separately (see README — platform-specific wheels):
-#   pip install detectron2 -f https://dl.fbaipublicfiles.com/detectron2/wheels/cpu/torch2.3/index.html
-# layoutparser wraps Detectron2 for document layout analysis:
-layoutparser[layoutmodels]==0.3.4
 
-# ── Diagram Detection (YOLOv8) ────────────────────────────────────────────────
-ultralytics==8.2.18
+# ── 2. Database ───────────────────────────────────────────────────
+sqlalchemy
+pydantic
+python-dotenv
 
-# ── NLP ───────────────────────────────────────────────────────────────────────
-spacy==3.8.2
-nltk==3.8.1
-pyspellchecker==0.8.1
 
-# ── Computer Vision ───────────────────────────────────────────────────────────
-opencv-python-headless==4.9.0.80
-Pillow==10.3.0
+# ── 3. PDF extraction — typed PDFs (always required) ─────────────
+pdfplumber
+pymupdf
+pdf2image
+Pillow
 
-# ── LLM / AI APIs ─────────────────────────────────────────────────────────────
-anthropic>=0.40.0
-google-generativeai==0.7.0
-groq==0.9.0
 
-# ── Database ──────────────────────────────────────────────────────────────────
-sqlalchemy==2.0.30
-alembic==1.13.1
+# ── 4. OCR engines — scanned / image-only PDFs ───────────────────
+#
+# Install at least ONE of these for scanned PDFs to work.
+# Priority (fastest → most capable):
+#   Tesseract → PaddleOCR → TrOCR
+#
+# The parsers auto-detect which engines are installed at startup
+# and skip any that are missing — no crashes, no unnecessary fallbacks.
 
-# ── API / Async ───────────────────────────────────────────────────────────────
-pydantic==2.7.3
-pydantic-settings==2.2.1
-httpx==0.27.0
-aiofiles==23.2.1
-python-dotenv==1.0.1
+# Option A: Tesseract (RECOMMENDED — fastest, ~5s/10 pages)
+#   Linux:   sudo apt install tesseract-ocr
+#   macOS:   brew install tesseract
+#   Windows: https://github.com/UB-Mannheim/tesseract/wiki
+pytesseract
+opencv-python
 
-# ── Data / ML Utils ───────────────────────────────────────────────────────────
-numpy==1.26.4
-scipy==1.13.1
-scikit-learn==1.5.0
-PyPDF2==3.0.1
-pandas==2.2.2
+# Option B: PaddleOCR (better for tables and complex layouts)
+#   Fix for OneDNN crash on Windows: use exactly 2.7.3
+paddleocr==2.7.3
+paddlepaddle
 
-# ── Frontend ──────────────────────────────────────────────────────────────────
-streamlit==1.35.0
-plotly==5.22.0
+# Option C: TrOCR via HuggingFace (last resort — slow, GPU recommended)
+#   torch and transformers are also required by the LLM evaluator (see §5).
+torch
+torchvision
+transformers
 
-# ── Testing ───────────────────────────────────────────────────────────────────
-pytest==8.2.1
-pytest-asyncio==0.23.7
+
+# ── 5. AI / LLM ───────────────────────────────────────────────────
+# Groq — primary LLM provider (set GROQ_API_KEY in .env)
+groq
+
+# Anthropic Claude — fallback LLM provider (set ANTHROPIC_API_KEY in .env)
+# Optional: leave uninstalled if you only use Groq
+anthropic
+
+
+# ── 6. Computer Vision — diagram detection ────────────────────────
+ultralytics
+numpy
+scipy
+
+
+# ── 7. NLP & semantic similarity ──────────────────────────────────
+sentence-transformers
+scikit-learn
+nltk
+spacy
+pyspellchecker          # used by text_processor.py for OCR spell correction
+# After install, download spaCy model:
+#   python -m spacy download en_core_web_sm
+
+
+# ── 8. Data & utilities ───────────────────────────────────────────
+pandas
+
+
+# ── 9. Frontend dashboard ─────────────────────────────────────────
+streamlit
+
+
+# ══════════════════════════════════════════════════════════════════
+# QUICK INSTALL GUIDES
+# ══════════════════════════════════════════════════════════════════
+#
+# Minimal (typed PDFs only, no OCR):
+#   pip install fastapi uvicorn[standard] python-multipart aiofiles \
+#               requests httpx sqlalchemy pydantic python-dotenv \
+#               pdfplumber pymupdf Pillow groq anthropic \
+#               sentence-transformers scikit-learn nltk pandas streamlit
+#
+# + Tesseract OCR support (recommended):
+#   Linux:   sudo apt install tesseract-ocr poppler-utils
+#   macOS:   brew install tesseract poppler
+#   Windows: https://github.com/UB-Mannheim/tesseract/wiki
+#   pip install pytesseract opencv-python pdf2image
+#
+# + PaddleOCR support (Windows — use exact version to avoid OneDNN crash):
+#   pip install paddlepaddle paddleocr==2.7.3
+#
+# + GPU acceleration (NVIDIA):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#   pip install paddlepaddle-gpu
+#
+# Post-install steps:
+#   python -m spacy download en_core_web_sm
+#   python -m nltk.downloader stopwords punkt
+# ══════════════════════════════════════════════════════════════════

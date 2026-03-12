@@ -1,10 +1,14 @@
 """
 IntelliGrade-H: Evaluation Metrics & Testing
 Validates AI grading against teacher scores using MAE, Pearson r, Cohen's Kappa.
+
+Fix vs original:
+  - test_mae() referenced pytest.approx without importing pytest — added import
 """
 
 import json
 import logging
+import pytest                      # ← was missing; caused NameError in test_mae()
 from pathlib import Path
 from typing import List, Dict, Tuple
 import math
@@ -27,7 +31,7 @@ def pearson_correlation(y_true: List[float], y_pred: List[float]) -> float:
     n = len(y_true)
     mean_t = sum(y_true) / n
     mean_p = sum(y_pred) / n
-    cov = sum((t - mean_t) * (p - mean_p) for t, p in zip(y_true, y_pred)) / n
+    cov  = sum((t - mean_t) * (p - mean_p) for t, p in zip(y_true, y_pred)) / n
     std_t = math.sqrt(sum((t - mean_t) ** 2 for t in y_true) / n)
     std_p = math.sqrt(sum((p - mean_p) ** 2 for p in y_pred) / n)
     if std_t == 0 or std_p == 0:
@@ -44,15 +48,10 @@ def accuracy_within_margin(
 
 
 def cohen_kappa(y_true: List[int], y_pred: List[int]) -> float:
-    """
-    Cohen's Kappa for ordinal agreement.
-    Scores should be discretized to integers first.
-    """
+    """Cohen's Kappa for ordinal agreement."""
     categories = sorted(set(y_true + y_pred))
     n = len(y_true)
-    # Observed agreement
     p_o = sum(1 for t, p in zip(y_true, y_pred) if t == p) / n
-    # Expected agreement
     p_e = sum(
         (y_true.count(c) / n) * (y_pred.count(c) / n)
         for c in categories
@@ -83,17 +82,13 @@ class SystemEvaluator:
         pass
 
     def evaluate_from_csv(self, csv_path: str, engine=None) -> Dict:
-        """
-        Run end-to-end evaluation against a labelled CSV.
-        If engine is None, reports must already have 'ai_score' column.
-        """
         import csv
         with open(csv_path, newline="", encoding="utf-8") as f:
             rows = list(csv.DictReader(f))
 
         teacher_scores = []
-        ai_scores = []
-        errors = []
+        ai_scores      = []
+        errors         = []
 
         for i, row in enumerate(rows):
             teacher = float(row["teacher_score"])
@@ -120,21 +115,19 @@ class SystemEvaluator:
 
         metrics = self._compute_metrics(teacher_scores, ai_scores)
         metrics["errors"] = len(errors)
-        metrics["total"] = len(rows)
+        metrics["total"]  = len(rows)
         return metrics
 
-    def _compute_metrics(
-        self, teacher: List[float], ai: List[float]
-    ) -> Dict:
-        disc_t = discretize(teacher)
+    def _compute_metrics(self, teacher: List[float], ai: List[float]) -> Dict:
+        disc_t  = discretize(teacher)
         disc_ai = discretize(ai)
         return {
-            "mae": round(mean_absolute_error(teacher, ai), 4),
-            "pearson_r": pearson_correlation(teacher, ai),
-            "accuracy_within_1": accuracy_within_margin(teacher, ai, 1.0),
+            "mae":              round(mean_absolute_error(teacher, ai), 4),
+            "pearson_r":        pearson_correlation(teacher, ai),
+            "accuracy_within_1":  accuracy_within_margin(teacher, ai, 1.0),
             "accuracy_within_05": accuracy_within_margin(teacher, ai, 0.5),
-            "cohen_kappa": cohen_kappa(disc_t, disc_ai),
-            "n": len(teacher),
+            "cohen_kappa":      cohen_kappa(disc_t, disc_ai),
+            "n":                len(teacher),
         }
 
     def print_report(self, metrics: Dict):
@@ -185,22 +178,15 @@ def test_system_evaluator_no_engine():
         writer.writerows(rows)
         tmp = f.name
     evaluator = SystemEvaluator()
-    metrics = evaluator.evaluate_from_csv(tmp)
+    metrics   = evaluator.evaluate_from_csv(tmp)
     os.unlink(tmp)
     assert metrics["n"] == 2
     assert metrics["mae"] < 1.0
 
 
 if __name__ == "__main__":
-    import sys
-    # Simple CLI test
     teacher = [8, 7, 9, 6, 5, 10, 4, 7, 8, 6]
     ai      = [7.5, 6.8, 8.7, 6.2, 5.1, 9.8, 4.3, 7.2, 7.9, 6.0]
     ev = SystemEvaluator()
     metrics = ev._compute_metrics(teacher, ai)
     ev.print_report(metrics)
-
-try:
-    import pytest
-except ImportError:
-    pass

@@ -2,12 +2,22 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System dependencies
+# System dependencies:
+#   libgl1 / libglib2.0-0  — OpenCV (cv2)
+#   libgomp1               — PyTorch / PaddleOCR parallel ops
+#   poppler-utils          — pdf2image (PDF → PIL Images)
+#   tesseract-ocr          — pytesseract OCR engine
+#   tesseract-ocr-eng      — English language pack for Tesseract
+#   wget / curl            — YOLO model auto-download at runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libgomp1 \
     poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    wget \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Python dependencies
@@ -17,13 +27,19 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Download spaCy model
 RUN python -m spacy download en_core_web_sm
 
+# Download NLTK data used by text_processor.py as spaCy fallback
+RUN python -c "import nltk; nltk.download('stopwords', quiet=True); nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True)"
+
+# Pre-download YOLOv8n weights so the container doesn't need internet at runtime.
+# ultralytics caches to /root/.cache/ultralytics/
+RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" || true
+
 # Copy application code
 COPY backend/    ./backend/
-COPY prompts/    ./prompts/
 COPY .env.example .env
 
-# Create upload directory
-RUN mkdir -p /app/uploads
+# Create upload and model directories
+RUN mkdir -p /app/uploads /app/models
 
 ENV PYTHONPATH=/app
 ENV UPLOAD_DIR=/app/uploads

@@ -99,8 +99,9 @@ def _open_ended_metrics(
     mae = float(np.mean(np.abs(ai - gt)))
 
     pearson_r = 0.0
-    if np.std(ai) > 0 and np.std(gt) > 0:
-        pearson_r = float(np.corrcoef(ai, gt)[0, 1])
+    if np.std(ai) > 1e-9 and np.std(gt) > 1e-9:
+        r = float(np.corrcoef(ai, gt)[0, 1])
+        pearson_r = max(-1.0, min(1.0, 0.0 if np.isnan(r) else r))
 
     kappa  = _cohen_kappa(ai.round().astype(int), gt.round().astype(int), int(max_marks))
     acc_1  = float(np.mean(np.abs(ai - gt) <= 1.0))
@@ -144,7 +145,9 @@ def _cohen_kappa(pred: np.ndarray, true: np.ndarray, max_marks: int) -> float:
     try:
         labels = list(range(max_marks + 1))
         return cohen_kappa_score(true, pred, labels=labels, weights="linear")
-    except Exception:
+    except Exception as e:
+        import logging as _log
+        _log.getLogger(__name__).debug("cohen_kappa_score failed (returning 0.0): %s", e)
         return 0.0
 
 

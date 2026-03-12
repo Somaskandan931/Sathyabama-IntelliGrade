@@ -26,7 +26,7 @@ class RubricResult:
 class RubricMatcher:
     """
     Two-mode rubric matching for open-ended questions:
-    1. Zero-shot NLI (default, no training) — uses facebook/bart-large-mnli
+    1. Zero-shot NLI (default, no training) — uses cross-encoder/nli-deberta-v3-small
     2. Fine-tuned BERT classifier (if training data is available)
     """
 
@@ -46,10 +46,10 @@ class RubricMatcher:
     def _get_zero_shot_pipeline(self):
         if self._zero_shot_pipeline is None:
             from transformers import pipeline
-            logger.info("Loading zero-shot NLI pipeline for rubric matching...")
+            logger.info("Loading zero-shot NLI pipeline for rubric matching: %s", self.NLI_MODEL)
             self._zero_shot_pipeline = pipeline(
                 "zero-shot-classification",
-                model="facebook/bart-large-mnli",
+                model=self.NLI_MODEL,
                 device=-1
             )
         return self._zero_shot_pipeline

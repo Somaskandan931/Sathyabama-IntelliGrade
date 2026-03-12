@@ -92,8 +92,9 @@ class TextProcessor:
         """Fix whitespace, remove control characters, normalize quotes."""
         # remove non-printable characters except newline and space
         text = re.sub(r'[^\x20-\x7E\n]', ' ', text)
-        # normalize multiple spaces/newlines
-        text = re.sub(r'\n+', '. ', text)
+        # replace newlines — avoid double-period if line already ends with .!?
+        text = re.sub(r'(?<![.!?])\n+', '. ', text)
+        text = re.sub(r'[.!?]\n+', lambda m: m.group().rstrip('\n') + ' ', text)
         text = re.sub(r' {2,}', ' ', text)
         # fix missing space after period
         text = re.sub(r'\.([A-Z])', r'. \1', text)

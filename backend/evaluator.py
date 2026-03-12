@@ -1,5 +1,6 @@
 """
-IntelliGrade-H - Evaluation Engine (v3)
+IntelliGrade-H - Evaluation Engine (v3.1 — Groq-only)
+======================================================
 Orchestrates the full grading pipeline for any question type.
 
 Supported question types:
@@ -16,13 +17,13 @@ Supported question types:
   └─────────────┴────────────────────────────────────────────────────────────┘
 
 Hybrid scoring formula (open_ended / short_answer):
-  Final = 0.40 × LLM Score
+  Final = 0.40 × LLM Score        (Groq llama-3.3-70b)
         + 0.25 × Semantic Similarity
         + 0.20 × Rubric Coverage
         + 0.10 × Keyword Coverage
         + 0.05 × Length Normalization
 
-Set question_type="auto" to let the LLM classify it automatically.
+Set question_type="auto" to let Groq classify it automatically.
 """
 
 import time
@@ -37,6 +38,7 @@ from backend.text_processor import TextProcessor, ProcessedText
 from backend.similarity import SemanticSimilarityModel, SimilarityResult
 from backend.llm_evaluator import LLMEvaluator, LLMEvaluation
 from backend.rubric_matcher import RubricMatcher, RubricResult
+from backend.diagram_detector import DiagramDetector, DiagramDetectionResult
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +57,8 @@ class QuestionType(str, Enum):
     DIAGRAM      = "diagram"
     AUTO         = "auto"        # triggers LLM auto-classification
 
-# Types that use the full LLM pipeline
-LLM_TYPES        = {QuestionType.OPEN_ENDED, QuestionType.SHORT_ANSWER,
-                    QuestionType.FILL_BLANK, QuestionType.NUMERICAL, QuestionType.DIAGRAM}
 # Types that also use semantic similarity
 SIMILARITY_TYPES = {QuestionType.OPEN_ENDED, QuestionType.SHORT_ANSWER}
-# Types graded deterministically (no LLM call)
-DETERMINISTIC_TYPES = {QuestionType.MCQ, QuestionType.TRUE_FALSE}
 
 
 # ─────────────────────────────────────────────────────────
@@ -78,20 +75,20 @@ class EvaluationResult:
     llm_score: float = 0.0
     similarity_score: float = 0.0
     rubric_score: float = 0.0
-    keyword_score: float = 0.0      # keyword coverage (0–1)
-    length_score: float = 0.0       # length normalization bonus (0–1)
+    keyword_score: float = 0.0
+    length_score: float = 0.0
 
     # Deterministic grading fields
-    detected_answer: str = ""     # MCQ option / T or F / numerical value
-    correct_answer: str = ""      # ground truth
-    is_correct: Optional[bool] = None   # True/False for deterministic; None for LLM types
+    detected_answer: str = ""
+    correct_answer: str = ""
+    is_correct: Optional[bool] = None
 
     # OCR
     extracted_text: str = ""
     ocr_confidence: float = 0.0
     ocr_engine: str = ""
 
-    # Feedback (all types)
+    # Feedback
     strengths: list = field(default_factory=list)
     missing_concepts: list = field(default_factory=list)
     feedback: str = ""
@@ -100,8 +97,30 @@ class EvaluationResult:
     confidence: float = 0.0
     evaluation_time_sec: float = 0.0
     rubric_details: Optional[dict] = None
-    llm_provider: str = ""        # which LLM was used
-    auto_classified: bool = False  # True if question_type was auto-detected
+    llm_provider: str = ""
+    auto_classified: bool = False
+
+    # Diagram detection (populated for diagram question type)
+    diagram_detected: bool = False
+    n_diagrams: int = 0
+    diagram_detector_used: str = ""
+    diagram_bboxes: list = field(default_factory=list)
+
+    # Dynamic paper tracking (set by API layer)
+    exam_paper_id: Optional[str] = None
+    exam_question_id: Optional[str] = None
+    question_number: Optional[int] = None
+
+    # component_scores dict for booklet evaluate endpoint
+    @property
+    def component_scores(self) -> dict:
+        return {
+            "llm":        self.llm_score,
+            "similarity": self.similarity_score,
+            "rubric":     self.rubric_score,
+            "keyword":    self.keyword_score,
+            "length":     self.length_score,
+        }
 
     # Legacy aliases for API backward compat
     @property
@@ -119,7 +138,9 @@ class EvaluationResult:
 class EvaluationEngine:
     """
     Main pipeline for IntelliGrade-H.
-    Pass question_type="auto" to auto-classify using the LLM.
+
+    LLM provider: Groq (llama-3.3-70b-versatile) — configured via GROQ_API_KEY in .env
+    OCR model:    TrOCR fine-tuned — configured via TROCR_MODEL_PATH in .env
 
     Hybrid scoring weights (open_ended / short_answer):
       LLM Score         : 0.40
@@ -129,25 +150,24 @@ class EvaluationEngine:
       Length Normaliz.  : 0.05
     """
 
-    # Scoring weights — must sum to 1.0
     LLM_WEIGHT        = 0.40
     SIM_WEIGHT        = 0.25
     RUBRIC_WEIGHT     = 0.20
     KEYWORD_WEIGHT    = 0.10
     LENGTH_WEIGHT     = 0.05
 
-    def __init__ (
-            self,
-            ocr_engine: str = "trocr",
-            trocr_model_path: Optional[str] = None,
-            similarity_model: Optional[str] = None,
-            llm_weight: float = 0.40,
-            similarity_weight: float = 0.25,
-            rubric_weight: float = 0.20,
-            keyword_weight: float = 0.10,
-            length_weight: float = 0.05,
-            use_rubric: bool = True,
-    ) :
+    def __init__(
+        self,
+        ocr_engine: str = "trocr",
+        trocr_model_path: Optional[str] = None,
+        similarity_model: Optional[str] = None,
+        llm_weight: float = 0.40,
+        similarity_weight: float = 0.25,
+        rubric_weight: float = 0.20,
+        keyword_weight: float = 0.10,
+        length_weight: float = 0.05,
+        use_rubric: bool = True,
+    ):
         self.LLM_WEIGHT     = llm_weight
         self.SIM_WEIGHT     = similarity_weight
         self.RUBRIC_WEIGHT  = rubric_weight
@@ -155,21 +175,22 @@ class EvaluationEngine:
         self.LENGTH_WEIGHT  = length_weight
 
         import os
-        _trocr_path = trocr_model_path or os.getenv("TROCR_MODEL_PATH", "microsoft/trocr-small-handwritten")
-        _sbert_model = similarity_model or os.getenv("SBERT_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+        _trocr_path  = trocr_model_path or os.getenv("TROCR_MODEL_PATH", "microsoft/trocr-small-handwritten")
+        _sbert_model = similarity_model  or os.getenv("SBERT_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
-        self.ocr = OCRModule( engine=ocr_engine, trocr_model_path=_trocr_path )
-        self.text_processor = TextProcessor()
-        self.similarity_model = SemanticSimilarityModel( _sbert_model )
-
-        # Initialize LLM evaluator — uses Groq (primary) or Claude (fallback) from .env
-        self.llm_evaluator = LLMEvaluator()
-
+        self.ocr              = OCRModule(trocr_model_path=_trocr_path)
+        self.text_processor   = TextProcessor()
+        self.similarity_model = SemanticSimilarityModel(_sbert_model)
+        self.llm_evaluator    = LLMEvaluator()
         self.rubric_matcher   = RubricMatcher() if use_rubric else None
-        self._classifier = None  # lazy-init to avoid circular imports
+        self.diagram_detector = DiagramDetector()   # YOLO + heuristic fallback
+        self._classifier      = None  # lazy-init
 
-        logger.info( "EvaluationEngine initialized with LLM provider: %s",
-                     self.llm_evaluator._get_client().active_provider if self.llm_evaluator else "none" )
+        logger.info(
+            "EvaluationEngine initialized. OCR model: %s | LLM: Groq/%s",
+            _trocr_path,
+            __import__("os").getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        )
 
     def _get_classifier(self):
         if self._classifier is None:
@@ -183,93 +204,121 @@ class EvaluationEngine:
 
     def evaluate(
         self,
-        student_image,
-        question: str,
+        student_image=None,
+        question: str = "",
         teacher_answer: str = "",
         max_marks: float = 10.0,
         rubric_criteria: Optional[list] = None,
         question_type: str = "auto",
-        # Deterministic grading fields
-        correct_option: Optional[str] = None,    # MCQ: "A"/"B"/"C"/"D"
-        correct_answer: Optional[str] = None,    # True/False / numerical value
+        correct_option: Optional[str] = None,
+        correct_answer: Optional[str] = None,
         mcq_options: Optional[dict] = None,
-        numerical_tolerance: float = 0.01,       # ±1% for numerical answers
+        numerical_tolerance: float = 0.01,
+        # Alternative: pass text directly (used by booklet evaluation)
+        student_answer: Optional[str] = None,
+        question_text: Optional[str] = None,
+        question_number: Optional[int] = None,
     ) -> EvaluationResult:
         """
         Full pipeline evaluation for any question type.
 
-        Parameters
-        ----------
-        question_type : "auto" | "mcq" | "true_false" | "fill_blank" |
-                        "short_answer" | "numerical" | "open_ended" | "diagram"
-        correct_option: letter A-E (MCQ only)
-        correct_answer: expected answer string (true_false, numerical, fill_blank)
-        numerical_tolerance: fractional tolerance for numerical comparison (default ±1%)
+        Two modes:
+          1. student_image path/PIL  — full OCR → evaluate pipeline
+          2. student_answer text     — skip OCR, evaluate text directly
         """
         start = time.time()
 
-        # ── Step 1: OCR ──────────────────────────────────
-        logger.info("Step 1: Running OCR...")
-        path = Path(str(student_image))
-        if path.suffix.lower() == ".pdf":
-            try:
-                page_results = self.ocr.extract_from_pdf(str(path))
-                if page_results:
-                    combined_text = "\n".join(r.text for r in page_results if r.text)
-                    avg_conf = sum(r.confidence for r in page_results) / len(page_results)
-                    ocr_result = OCRResult(text=combined_text, confidence=avg_conf, engine="trocr-pdf")
-                else:
-                    ocr_result = OCRResult(text="", confidence=0.0, engine="pdf")
-            except Exception as e:
-                logger.error("PDF OCR failed in evaluator: %s", e)
-                ocr_result = OCRResult(text="", confidence=0.0, engine="failed")
+        # Allow question_text alias for question
+        if question_text and not question:
+            question = question_text
+
+        # ── Mode 2: text passed directly (booklet evaluation) ──
+        if student_answer is not None and student_image is None:
+            ocr_result = OCRResult(
+                text=student_answer, confidence=1.0, engine="direct-text"
+            )
+            student_text_raw = student_answer
         else:
-            ocr_result: OCRResult = self.ocr.extract_text(str(student_image))
-        student_text_raw = ocr_result.text
+            # ── Mode 1: OCR from image/PDF ──────────────────────
+            logger.info("Step 1: Running OCR...")
+            if student_image is None:
+                return self._empty_result(
+                    max_marks,
+                    question_type if question_type != "auto" else "open_ended",
+                    "No student image or answer text provided.",
+                    time.time() - start,
+                )
+
+            path = Path(str(student_image))
+            if path.suffix.lower() == ".pdf":
+                try:
+                    page_results = self.ocr.extract_from_pdf(str(path))
+                    if page_results:
+                        combined_text = "\n".join(r.text for r in page_results if r.text)
+                        avg_conf = sum(r.confidence for r in page_results) / len(page_results)
+                        ocr_result = OCRResult(text=combined_text, confidence=avg_conf, engine="trocr-pdf")
+                    else:
+                        ocr_result = OCRResult(text="", confidence=0.0, engine="pdf")
+                except Exception as e:
+                    logger.error("PDF OCR failed: %s", e)
+                    ocr_result = OCRResult(text="", confidence=0.0, engine="failed")
+            else:
+                ocr_result = self.ocr.extract_text(str(student_image))
+
+            student_text_raw = ocr_result.text
 
         if not student_text_raw.strip():
-            logger.warning("OCR returned empty text.")
+            logger.warning("OCR/text input is empty.")
             return self._empty_result(
-                max_marks, question_type if question_type != "auto" else "open_ended",
-                "OCR returned empty text.", time.time() - start
+                max_marks,
+                question_type if question_type != "auto" else "open_ended",
+                "No text found in student answer.",
+                time.time() - start,
             )
 
-        # ── Step 2: Auto-classify if needed ──────────────
+        # ── Auto-classify ─────────────────────────────────────
         auto_classified = False
         resolved_type   = question_type
 
-        if question_type == "auto" or question_type == QuestionType.AUTO:
-            logger.info("Step 2: Auto-classifying question type...")
+        if question_type in ("auto", QuestionType.AUTO):
+            logger.info("Auto-classifying question type via Groq...")
             clf    = self._get_classifier()
             result = clf.classify(question)
             resolved_type   = result.question_type
             auto_classified = True
             logger.info(
                 "Auto-classified as '%s' (conf=%.2f, method=%s)",
-                resolved_type, result.confidence, result.method
+                resolved_type, result.confidence, result.method,
             )
         else:
             resolved_type = QuestionType(question_type).value
 
         qtype = QuestionType(resolved_type)
 
-        # ── Step 3: Route to correct pipeline ────────────
+        # ── Route to pipeline ─────────────────────────────────
         if qtype == QuestionType.MCQ:
-            res = self._evaluate_mcq(student_text_raw, ocr_result,
-                                     correct_option, max_marks, start)
+            res = self._evaluate_mcq(
+                student_text_raw, ocr_result, correct_option, max_marks, start,
+                mcq_options=mcq_options,
+            )
         elif qtype == QuestionType.TRUE_FALSE:
-            res = self._evaluate_true_false(student_text_raw, ocr_result,
-                                            correct_answer, max_marks, start)
+            res = self._evaluate_true_false(
+                student_text_raw, ocr_result, correct_answer, max_marks, start
+            )
         elif qtype == QuestionType.NUMERICAL:
             res = self._evaluate_numerical_or_llm(
                 student_text_raw, ocr_result, question, teacher_answer,
-                correct_answer, max_marks, numerical_tolerance, start
+                correct_answer, max_marks, numerical_tolerance, start,
+            )
+        elif qtype == QuestionType.DIAGRAM:
+            res = self._evaluate_diagram(
+                student_image, student_text_raw, ocr_result, question,
+                teacher_answer, max_marks, rubric_criteria, start,
             )
         else:
-            # All LLM-based types: fill_blank, short_answer, open_ended, diagram
             res = self._evaluate_with_llm(
                 student_text_raw, ocr_result, question, teacher_answer,
-                max_marks, rubric_criteria, qtype, start
+                max_marks, rubric_criteria, qtype, start,
             )
 
         res.auto_classified = auto_classified
@@ -279,23 +328,37 @@ class EvaluationEngine:
     # MCQ
     # ─────────────────────────────────────────────────────
 
-    def _evaluate_mcq(
-        self,
-        raw_text: str,
-        ocr_result: OCRResult,
-        correct_option: Optional[str],
-        max_marks: float,
-        start: float,
-    ) -> EvaluationResult:
+    def _evaluate_mcq(self, raw_text, ocr_result, correct_option, max_marks, start,
+                      mcq_options: Optional[dict] = None):
         if not correct_option:
             return self._empty_result(
                 max_marks, "mcq",
                 "Correct option not provided for MCQ grading.",
-                time.time() - start
+                time.time() - start,
             )
 
         detected   = _extract_mcq_answer(raw_text)
         correct    = correct_option.strip().upper()
+
+        # If OCR confidence is low and we have MCQ options, attempt LLM-assisted detection
+        if detected is None and mcq_options and ocr_result.confidence < 0.5:
+            try:
+                from backend.llm_provider import get_llm_client
+                from backend.evaluation_prompts import MCQ_VALIDATION_PROMPT
+                prompt = MCQ_VALIDATION_PROMPT.format(
+                    question="",
+                    option_a=mcq_options.get("A", ""),
+                    option_b=mcq_options.get("B", ""),
+                    option_c=mcq_options.get("C", ""),
+                    option_d=mcq_options.get("D", ""),
+                    student_answer=raw_text,
+                )
+                data = get_llm_client().generate_json(prompt)
+                detected = (data.get("detected_option") or "").strip().upper() or None
+                logger.info("MCQ LLM fallback detected: %s (conf=%.2f)", detected, data.get("confidence", 0))
+            except Exception as e:
+                logger.warning("MCQ LLM fallback failed: %s", e)
+
         is_correct = (detected == correct) if detected else False
         score      = max_marks if is_correct else 0.0
 
@@ -321,23 +384,16 @@ class EvaluationEngine:
     # True / False
     # ─────────────────────────────────────────────────────
 
-    def _evaluate_true_false(
-        self,
-        raw_text: str,
-        ocr_result: OCRResult,
-        correct_answer: Optional[str],
-        max_marks: float,
-        start: float,
-    ) -> EvaluationResult:
+    def _evaluate_true_false(self, raw_text, ocr_result, correct_answer, max_marks, start):
         if not correct_answer:
             return self._empty_result(
                 max_marks, "true_false",
                 "Correct answer (True/False) not provided.",
-                time.time() - start
+                time.time() - start,
             )
 
         detected   = _extract_true_false(raw_text)
-        correct    = correct_answer.strip().upper()    # "TRUE" or "FALSE"
+        correct    = correct_answer.strip().upper()
         is_correct = (detected == correct) if detected else False
         score      = max_marks if is_correct else 0.0
 
@@ -360,40 +416,32 @@ class EvaluationEngine:
         )
 
     # ─────────────────────────────────────────────────────
-    # Numerical — try exact/tolerance first, then LLM for working
+    # Numerical
     # ─────────────────────────────────────────────────────
 
     def _evaluate_numerical_or_llm(
-        self,
-        raw_text: str,
-        ocr_result: OCRResult,
-        question: str,
-        teacher_answer: str,
-        correct_answer: Optional[str],
-        max_marks: float,
-        tolerance: float,
-        start: float,
-    ) -> EvaluationResult:
-        # Try numeric exact/tolerance match first if correct_answer is a number
+        self, raw_text, ocr_result, question, teacher_answer,
+        correct_answer, max_marks, tolerance, start,
+    ):
         if correct_answer:
             detected_num = _extract_number(raw_text)
             try:
                 expected_num = float(correct_answer.strip().replace(",", ""))
                 if detected_num is not None:
-                    diff = abs(detected_num - expected_num)
+                    diff       = abs(detected_num - expected_num)
                     within_tol = diff <= abs(expected_num * tolerance) or diff < 0.001
-                    score = max_marks if within_tol else 0.0
-                    is_correct = within_tol
+                    score      = max_marks if within_tol else 0.0
 
-                    if within_tol:
-                        feedback = f"✅ Correct numerical answer: {detected_num} (expected {expected_num})."
-                    else:
-                        feedback = f"❌ Numerical answer {detected_num} is outside tolerance. Expected {expected_num}."
+                    feedback = (
+                        f"✅ Correct numerical answer: {detected_num} (expected {expected_num})."
+                        if within_tol
+                        else f"❌ Numerical answer {detected_num} outside tolerance. Expected {expected_num}."
+                    )
 
                     return EvaluationResult(
                         final_score=score, max_marks=max_marks, question_type="numerical",
                         detected_answer=str(detected_num), correct_answer=str(expected_num),
-                        is_correct=is_correct,
+                        is_correct=within_tol,
                         extracted_text=raw_text,
                         ocr_confidence=round(ocr_result.confidence, 3),
                         ocr_engine=ocr_result.engine,
@@ -402,110 +450,194 @@ class EvaluationEngine:
                         evaluation_time_sec=round(time.time() - start, 2),
                     )
             except ValueError:
-                pass   # correct_answer is not a plain number — fall through to LLM
+                pass
 
-        # Fall through: use LLM to grade method + answer
         return self._evaluate_with_llm(
             raw_text, ocr_result, question, teacher_answer,
-            max_marks, None, QuestionType.NUMERICAL, start
+            max_marks, None, QuestionType.NUMERICAL, start,
         )
 
     # ─────────────────────────────────────────────────────
-    # LLM-based pipeline (open_ended, short_answer, fill_blank, diagram, numerical fallback)
+    # Diagram
+    # ─────────────────────────────────────────────────────
+
+    def _evaluate_diagram(
+        self, student_image, raw_text, ocr_result, question, teacher_answer,
+        max_marks, rubric_criteria, start,
+    ):
+        """
+        Diagram question pipeline:
+          1. Run DiagramDetector on the student image (YOLO → heuristic).
+          2. Append detection context to the OCR text so the LLM is aware
+             of how many / what kind of diagram regions were found.
+          3. Pass the enriched text through the normal LLM evaluator.
+          4. Apply a presence bonus: if the question clearly requires a
+             diagram and one is detected, add a small guaranteed mark
+             (up to 20% of max_marks) so that a drawn-but-poorly-labelled
+             diagram still receives partial credit.
+        """
+        logger.info("Step: Diagram detection...")
+
+        diagram_result: Optional[DiagramDetectionResult] = None
+        diagram_context = ""
+
+        # Only run visual detection when we have an actual image path/bytes
+        if student_image is not None:
+            try:
+                diagram_result = self.diagram_detector.detect(student_image)
+                if diagram_result.has_diagram:
+                    diagram_context = (
+                        f"\n\n[Diagram Detection: {diagram_result.n_diagrams} diagram region(s) "
+                        f"detected via {diagram_result.detector_used}. "
+                        f"The student has drawn a diagram as part of their answer.]"
+                    )
+                    logger.info(
+                        "Diagram detected: %d region(s) via %s",
+                        diagram_result.n_diagrams,
+                        diagram_result.detector_used,
+                    )
+                else:
+                    diagram_context = (
+                        "\n\n[Diagram Detection: No diagram regions detected. "
+                        "The student may not have drawn the required diagram.]"
+                    )
+                    logger.info("No diagram regions found.")
+            except Exception as exc:
+                logger.warning("Diagram detection failed: %s", exc)
+
+        # Enrich OCR text with diagram context before LLM evaluation
+        enriched_text = raw_text + diagram_context
+        enriched_ocr  = OCRResult(
+            text=enriched_text,
+            confidence=ocr_result.confidence,
+            engine=ocr_result.engine,
+        )
+
+        # Run LLM pipeline on enriched text
+        llm_result = self._evaluate_with_llm(
+            enriched_text, enriched_ocr, question, teacher_answer,
+            max_marks, rubric_criteria, QuestionType.DIAGRAM, start,
+        )
+
+        # ── Diagram presence bonus ────────────────────────────────────────
+        # If a diagram was detected but the LLM gave a very low score
+        # (possibly because labels/annotations were illegible), give the
+        # student at least 20% of max_marks for having drawn something.
+        PRESENCE_FLOOR = 0.20  # 20% of max_marks
+        if (
+            diagram_result is not None
+            and diagram_result.has_diagram
+            and llm_result.final_score < (max_marks * PRESENCE_FLOOR)
+        ):
+            llm_result.final_score = round(max_marks * PRESENCE_FLOOR, 2)
+            llm_result.feedback = (
+                "[Partial credit: diagram detected but labels/content were unclear.] "
+                + llm_result.feedback
+            )
+
+        # Attach diagram metadata to result
+        if diagram_result is not None:
+            llm_result.diagram_detected      = diagram_result.has_diagram
+            llm_result.n_diagrams            = diagram_result.n_diagrams
+            llm_result.diagram_detector_used = diagram_result.detector_used
+            llm_result.diagram_bboxes        = [
+                vars(r) if hasattr(r, "__dict__") else r
+                for r in getattr(diagram_result, "regions", [])
+            ]
+
+        return llm_result
+
+    # ─────────────────────────────────────────────────────
+    # LLM-based pipeline
     # ─────────────────────────────────────────────────────
 
     def _evaluate_with_llm(
-        self,
-        student_text_raw: str,
-        ocr_result: OCRResult,
-        question: str,
-        teacher_answer: str,
-        max_marks: float,
-        rubric_criteria: Optional[list],
-        qtype: QuestionType,
-        start: float,
-    ) -> EvaluationResult:
-        # Text processing (spellcheck + normalize)
+        self, student_text_raw, ocr_result, question, teacher_answer,
+        max_marks, rubric_criteria, qtype, start,
+    ):
         logger.info("Text processing...")
         processed    = self.text_processor.process(student_text_raw)
         student_text = processed.cleaned
 
-        # Semantic similarity (only for open_ended and short_answer)
         sim_score = 0.0
+        sentence_scores = None
         if qtype in SIMILARITY_TYPES and teacher_answer:
             logger.info("Computing semantic similarity...")
             sim_result = self.similarity_model.compute_similarity(student_text, teacher_answer)
             sim_score  = sim_result.score
+            # For open_ended, also compute sentence-level breakdown for richer feedback
+            if qtype == QuestionType.OPEN_ENDED and len(student_text.split()) > 10:
+                try:
+                    sent_result  = self.similarity_model.compute_sentence_level(student_text, teacher_answer)
+                    sentence_scores = sent_result.get("sentence_scores")
+                except Exception as e:
+                    logger.debug("Sentence-level similarity skipped: %s", e)
 
-        # LLM evaluation
-        logger.info("Running LLM evaluation (type=%s)...", qtype.value)
+        logger.info("Running Groq LLM evaluation (type=%s)...", qtype.value)
         rubric_labels = [r["criterion"] for r in rubric_criteria] if rubric_criteria else None
         llm_eval: LLMEvaluation = self.llm_evaluator.evaluate(
-            question=question,
-            teacher_answer=teacher_answer,
-            student_answer=student_text,
-            max_marks=max_marks,
-            rubric_criteria=rubric_labels,
-            question_type=qtype.value,
+            question        = question,
+            teacher_answer  = teacher_answer,
+            student_answer  = student_text,
+            max_marks       = max_marks,
+            rubric_criteria = rubric_labels,
+            question_type   = qtype.value,
         )
 
-        # Rubric matching (open_ended only)
         rubric_result = None
         rubric_score  = 0.0
         if self.rubric_matcher and rubric_criteria and qtype == QuestionType.OPEN_ENDED:
             logger.info("Rubric matching...")
             rubric_result = self.rubric_matcher.evaluate_rubric(
-                student_answer=student_text,
-                rubric_criteria=rubric_criteria,
-                question_type="open_ended",
+                student_answer  = student_text,
+                rubric_criteria = rubric_criteria,
+                question_type   = "open_ended",
             )
-            rubric_score = rubric_result.coverage_ratio   # 0–1 coverage
+            rubric_score = rubric_result.coverage_ratio
 
-        # Keyword coverage score
         keyword_score = 0.0
+        length_score  = 0.0
         if teacher_answer and qtype in SIMILARITY_TYPES:
             keyword_score = self._keyword_coverage(student_text, teacher_answer)
+            length_score  = self._length_normalization(student_text, teacher_answer)
 
-        # Length normalization score
-        length_score = 0.0
-        if teacher_answer and qtype in SIMILARITY_TYPES:
-            length_score = self._length_normalization(student_text, teacher_answer)
-
-        # Hybrid score
         if qtype in SIMILARITY_TYPES:
             final_score = self._hybrid_score(
-                llm_score=llm_eval.score,
-                similarity=sim_score,
-                rubric_coverage=rubric_score,
-                keyword_coverage=keyword_score,
-                length_norm=length_score,
-                max_marks=max_marks,
+                llm_score        = llm_eval.score,
+                similarity       = sim_score,
+                rubric_coverage  = rubric_score,
+                keyword_coverage = keyword_score,
+                length_norm      = length_score,
+                max_marks        = max_marks,
             )
         else:
-            final_score = llm_eval.score   # LLM score only for non-similarity types
+            final_score = llm_eval.score
 
         final_score = round(max(0.0, min(max_marks, final_score)), 2)
         elapsed     = round(time.time() - start, 2)
 
         return EvaluationResult(
-            final_score=final_score,
-            max_marks=max_marks,
-            question_type=qtype.value,
-            llm_score=llm_eval.score,
-            similarity_score=round(sim_score, 4),
-            rubric_score=round(rubric_score, 4),
-            keyword_score=round(keyword_score, 4),
-            length_score=round(length_score, 4),
-            extracted_text=student_text,
-            ocr_confidence=round(ocr_result.confidence, 3),
-            ocr_engine=ocr_result.engine,
-            strengths=llm_eval.strengths,
-            missing_concepts=llm_eval.missing_concepts,
-            feedback=llm_eval.feedback,
-            confidence=round(llm_eval.confidence, 3),
-            evaluation_time_sec=elapsed,
-            rubric_details=vars(rubric_result) if rubric_result else None,
-            llm_provider=f"{llm_eval.provider}/{llm_eval.model}",
+            final_score      = final_score,
+            max_marks        = max_marks,
+            question_type    = qtype.value,
+            llm_score        = llm_eval.score,
+            similarity_score = round(sim_score, 4),
+            rubric_score     = round(rubric_score, 4),
+            keyword_score    = round(keyword_score, 4),
+            length_score     = round(length_score, 4),
+            extracted_text   = student_text,
+            ocr_confidence   = round(ocr_result.confidence, 3),
+            ocr_engine       = ocr_result.engine,
+            strengths        = llm_eval.strengths,
+            missing_concepts = llm_eval.missing_concepts,
+            feedback         = llm_eval.feedback,
+            confidence       = round(llm_eval.confidence, 3),
+            evaluation_time_sec = elapsed,
+            rubric_details   = {
+                **(vars(rubric_result) if rubric_result else {}),
+                **({"sentence_scores": sentence_scores} if sentence_scores else {}),
+            } or None,
+            llm_provider     = f"{llm_eval.provider}/{llm_eval.model}",
         )
 
     # ─────────────────────────────────────────────────────
@@ -551,7 +683,7 @@ class EvaluationEngine:
         return results
 
     # ─────────────────────────────────────────────────────
-    # Helpers
+    # Scoring helpers
     # ─────────────────────────────────────────────────────
 
     def _hybrid_score(
@@ -563,23 +695,6 @@ class EvaluationEngine:
         keyword_coverage: float = 0.5,
         length_norm: float = 1.0,
     ) -> float:
-        """
-        Hybrid scoring formula:
-          Final = max_marks × (
-            0.40 × (llm_score / max_marks)
-          + 0.25 × similarity
-          + 0.20 × rubric_coverage
-          + 0.10 × keyword_coverage
-          + 0.05 × length_norm
-          )
-
-        Backwards-compatible: _hybrid_score(llm, sim, max_marks) still works and
-        returns 0.6×llm + 0.4×sim×max_marks when rubric/keyword/length are 0/0.5/1.0.
-
-        Note: when called with only 3 positional args (legacy tests), rubric_coverage=0,
-        keyword_coverage=0.5, length_norm=1.0 so the weighted contributions from those
-        three factors partially offset. The evaluator internally passes all 6 args.
-        """
         llm_ratio = (llm_score / max_marks) if max_marks > 0 else 0.0
         combined = (
             self.LLM_WEIGHT     * llm_ratio
@@ -591,16 +706,10 @@ class EvaluationEngine:
         return round(combined * max_marks, 2)
 
     def _keyword_coverage(self, student_text: str, teacher_answer: str) -> float:
-        """
-        Compute the fraction of important teacher keywords present in the student answer.
-        Returns a float in [0.0, 1.0].
-        """
         import re
 
         def extract_keywords(text: str) -> set:
-            # Lowercase, strip punctuation, split into words
             words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
-            # Basic stopword removal
             stop = {
                 "the", "and", "are", "for", "that", "this", "with", "from",
                 "was", "not", "but", "can", "will", "also", "its", "used",
@@ -609,8 +718,8 @@ class EvaluationEngine:
             }
             return {w for w in words if w not in stop}
 
-        teacher_kw  = extract_keywords(teacher_answer)
-        student_kw  = extract_keywords(student_text)
+        teacher_kw = extract_keywords(teacher_answer)
+        student_kw = extract_keywords(student_text)
 
         if not teacher_kw:
             return 1.0
@@ -619,21 +728,16 @@ class EvaluationEngine:
         return round(min(1.0, covered / len(teacher_kw)), 4)
 
     def _length_normalization(self, student_text: str, teacher_answer: str) -> float:
-        """
-        Rewards answers that are appropriately long relative to the teacher answer.
-        Score = 1.0 when student length ≥ 60% of teacher length.
-        Scales linearly from 0 at 0% to 1.0 at 60%+ coverage.
-        Returns a float in [0.0, 1.0].
-        """
         student_len = len(student_text.split())
         teacher_len = len(teacher_answer.split())
         if teacher_len == 0:
             return 1.0
         ratio = student_len / teacher_len
-        # Reward up to 60% of teacher length (avoids penalizing concise correct answers)
         return round(min(1.0, ratio / 0.6), 4)
 
-    def _empty_result(self, max_marks: float, question_type: str, reason: str, elapsed: float) -> EvaluationResult:
+    def _empty_result(
+        self, max_marks: float, question_type: str, reason: str, elapsed: float
+    ) -> EvaluationResult:
         return EvaluationResult(
             final_score=0.0, max_marks=max_marks,
             question_type=question_type if question_type != "auto" else "open_ended",
@@ -668,17 +772,15 @@ def _extract_mcq_answer(text: str) -> Optional[str]:
 
 
 def _extract_true_false(text: str) -> Optional[str]:
-    """Extract True or False from OCR text. Returns 'TRUE' or 'FALSE' or None."""
+    """Extract True or False from OCR text. Returns 'TRUE', 'FALSE', or None."""
     import re
     t = text.strip().lower()
-    # Check explicit words first
     if re.search(r'\b(true|correct|yes|t)\b', t):
         if not re.search(r'\b(false|incorrect|no|f)\b', t):
             return "TRUE"
     if re.search(r'\b(false|incorrect|no|f)\b', t):
         if not re.search(r'\b(true|correct|yes|t)\b', t):
             return "FALSE"
-    # Single letter T or F
     m = re.match(r'^\s*([tf])\s*$', t, re.IGNORECASE)
     if m:
         return "TRUE" if m.group(1).upper() == "T" else "FALSE"
@@ -688,9 +790,7 @@ def _extract_true_false(text: str) -> Optional[str]:
 def _extract_number(text: str) -> Optional[float]:
     """Extract the most likely numerical answer from OCR text."""
     import re
-    # Find all numbers (including decimals and negatives)
     matches = re.findall(r'-?\d+(?:\.\d+)?', text.replace(",", ""))
     if not matches:
         return None
-    # Return the last number found (most likely to be the final answer)
     return float(matches[-1])

@@ -30,16 +30,29 @@ services:
       context: .
       dockerfile: Dockerfile.backend
     container_name: intelligrade_api
+    env_file:
+      - .env                          # loads GROQ_API_KEY and all other settings
     environment:
+      # Override DB URL to point at the Docker postgres service (not SQLite)
       - DATABASE_URL=postgresql://intelligrade:intelligrade_pass@db:5432/intelligrade
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # Upload dir inside the container
       - UPLOAD_DIR=/app/uploads
+      # OCR pipeline: trocr triggers the full Tesseract→PaddleOCR→TrOCR hybrid
       - OCR_ENGINE=trocr
-      - LLM_WEIGHT=0.6
-      - SIMILARITY_WEIGHT=0.4
+      # YOLO model path (pre-downloaded in Dockerfile.backend)
+      - YOLO_MODEL_PATH=yolov8n.pt
+      # Scoring weights — must sum to 1.0
+      - LLM_WEIGHT=0.40
+      - SIMILARITY_WEIGHT=0.25
+      - RUBRIC_WEIGHT=0.20
+      - KEYWORD_WEIGHT=0.10
+      - LENGTH_WEIGHT=0.05
     volumes:
       - ./uploads:/app/uploads
       - ./models:/app/models
+      # Cache YOLO / HuggingFace model downloads between container restarts
+      - yolo_cache:/root/.cache/ultralytics
+      - hf_cache:/root/.cache/huggingface
     ports:
       - "8000:8000"
     depends_on:
@@ -56,7 +69,9 @@ services:
       dockerfile: Dockerfile.frontend
     container_name: intelligrade_ui
     environment:
+      # dashboard.py reads API_BASE; set both names to be safe
       - API_BASE=http://backend:8000
+      - API_BASE_URL=http://backend:8000
     ports:
       - "8501:8501"
     depends_on:
@@ -65,3 +80,5 @@ services:
 
 volumes:
   postgres_data:
+  yolo_cache:       # persists YOLO weights between rebuilds
+  hf_cache:         # persists HuggingFace / TrOCR model weights

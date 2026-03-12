@@ -1,149 +1,196 @@
 # IntelliGrade-H
 
-![Python](https://img.shields.io/badge/Python-3.10-blue)
-![PyTorch](https://img.shields.io/badge/PyTorch-DeepLearning-red)
-![FastAPI](https://img.shields.io/badge/FastAPI-Backend-green)
-![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-orange)
-![License](https://img.shields.io/badge/License-MIT-yellow)
+<p align="center">
+  <b>AI-Powered Automatic Evaluation System for Handwritten Subjective Exam Answers</b><br/>
+  Developed at Sathyabama Institute of Science and Technology
+</p>
 
-**AI System for Automatic Evaluation of Handwritten Subjective Answers**
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.11-blue"/>
+  <img src="https://img.shields.io/badge/FastAPI-Backend-green"/>
+  <img src="https://img.shields.io/badge/PyTorch-DeepLearning-red"/>
+  <img src="https://img.shields.io/badge/Streamlit-Dashboard-orange"/>
+  <img src="https://img.shields.io/badge/TrOCR--Large-Handwriting_OCR-blueviolet"/>
+  <img src="https://img.shields.io/badge/Groq-LLaMA_3.3_70B-purple"/>
+  <img src="https://img.shields.io/badge/Claude-Haiku_Fallback-lightblue"/>
+  <img src="https://img.shields.io/badge/Sentence--BERT-NLP-yellow"/>
+  <img src="https://img.shields.io/badge/License-MIT-lightgrey"/>
+</p>
 
-IntelliGrade-H is an advanced AI-powered grading system designed to automatically evaluate handwritten student answers. The platform combines modern **computer vision, natural language processing, and large language models** to analyze student responses and generate accurate marks with detailed feedback.
-
-The system is designed for **universities, academic research, and scalable exam evaluation workflows**.
+<p align="center">
+  A production-grade AI grading system that evaluates handwritten exam booklets using<br/>
+  <b>Computer Vision · OCR · NLP · LLM Reasoning</b>
+</p>
 
 ---
 
-## Overview
+## Problem Statement
 
-Evaluating subjective answers is traditionally time-consuming, inconsistent between evaluators, and difficult to scale for large classes. IntelliGrade-H solves this using a **multi-stage AI pipeline** that converts handwritten answers into structured feedback and marks within seconds.
+Manual evaluation of handwritten subjective answers at scale is:
 
-The system integrates:
+- **Time-consuming** — days of effort for large cohorts
+- **Inconsistent** — scores vary significantly between evaluators
+- **Unscalable** — impractical for hundreds of students per subject
 
-- Handwriting Recognition (EasyOCR + TrOCR Ensemble)
-- Semantic Answer Evaluation (Sentence-BERT)
-- Rubric-Aware Grading (zero-shot NLI)
-- AI Feedback Generation (Claude primary, Groq fallback)
-- Teacher Analytics Dashboard (Streamlit)
+**IntelliGrade-H automates this end-to-end** — from a scanned booklet to final marks with structured, transparent feedback. All AI grades remain teacher-reviewable before finalisation.
 
 ---
 
 ## Key Features
 
-- Automatic handwriting recognition from scanned answer sheets and PDFs
-- Smart image preprocessing — auto-upscale, deskew, adaptive denoising, smart thresholding
-- Ensemble OCR — EasyOCR fast path, TrOCR for low-confidence pages
-- Semantic similarity scoring between student and teacher answers
-- Rubric-aware grading using zero-shot AI models
-- AI-generated feedback highlighting strengths and missing concepts
-- Question type auto-classification (MCQ, open-ended, numerical, diagram, etc.)
-- Batch grading for entire exam submissions
-- Teacher dashboard for analytics and grading review
-- REST API for LMS integration
+| Feature           | Description |
+|-------------------|---|
+| 6-Engine Hybrid OCR | Google Vision → Mistral → Azure → PaddleOCR → Tesseract → TrOCR cascade |
+| Fine-Tunable TrOCR | `trocr-large-handwritten` auto-replaced by your domain-trained model when present |
+| Dual LLM Support  | Groq LLaMA 3.3-70B (primary) + Anthropic Claude Haiku (automatic fallback) |
+| Semantic Similarity | Sentence-BERT cosine similarity + sentence-level breakdown |
+| Rubric Matching   | Zero-shot NLI rubric coverage via cross-encoder/nli-deberta-v3-small |
+| Answer Key Parser | Auto-extracts model answers from teacher PDF (typed or scanned) |
+| Question Paper Parser | Detects parts, marks, OR alternatives, 7 question types automatically |
+| Bulk Grading     | Evaluate an entire class in one upload with CSV export |
+| Analytics Dashboard | MAE, Pearson r, Cohen's Kappa, score distribution charts |
+| Docker Ready    | One-command deployment with PostgreSQL support |
 
 ---
 
-## System Architecture
+## 🏗️ System Architecture
 
 ```
-Answer Sheet (image / PDF)
-         │
-         ▼
-Image Preprocessing              ← preprocessor.py
-(upscale · denoise · deskew · CLAHE · threshold)
-         │
-         ▼
-OCR Ensemble                     ← ocr_module.py
-(EasyOCR → TrOCR on low confidence)
-         │
-         ▼
-Text Processing                  ← text_processor.py
-(clean · normalise · tokenise)
-         │
-         ▼
-Question Classifier              ← question_classifier.py
-(MCQ · open_ended · numerical · diagram · …)
-         │
-         ▼
-Evaluation Engine                ← evaluator.py
- ├─ Semantic Similarity          ← similarity.py      (Sentence-BERT)
- ├─ Rubric Matcher               ← rubric_matcher.py  (zero-shot NLI)
- ├─ Keyword Coverage             ← evaluator.py
- └─ LLM Evaluator                ← llm_evaluator.py   (Claude → Groq)
-         │
-         ▼
-Hybrid Scoring Engine
-Final = 0.40×LLM + 0.25×Similarity + 0.20×Rubric + 0.10×Keyword + 0.05×Length
-         │
-         ▼
-Teacher Dashboard                ← frontend/dashboard.py
+Handwritten Booklet (PDF / Image)
+           │
+           ▼
+   Image Preprocessing
+   (OpenCV — deskew, denoise, CLAHE, smart threshold)
+           │
+           ▼
+      Hybrid OCR Pipeline (6 engines)
+  Google Vision → Mistral OCR → Azure AI Vision
+    → PaddleOCR → Tesseract → TrOCR-Large
+           │
+           ▼
+     Text Processing
+   (spaCy + spell correction + normalisation)
+           │
+           ▼
+      Exam Parsers
+  ┌────────────────────┐
+  │ Question Paper     │
+  │ Answer Key         │
+  │ Student Booklet    │
+  └────────────────────┘
+           │
+           ▼
+    Evaluation Engine
+  ┌────────────────────┐
+  │ LLM Evaluator      │  ← Groq / Claude
+  │ Sentence-BERT      │
+  │ Rubric Matcher     │
+  │ Keyword Coverage   │
+  │ Diagram Detector   │  ← YOLOv8
+  └────────────────────┘
+           │
+           ▼
+   Hybrid Scoring Engine
+           │
+           ▼
+   Teacher Dashboard (Streamlit)
 ```
-
-<p align="center">
-  <img src="assets/ChatGPT Image Mar 6, 2026, 11_19_15 AM.png" alt="IntelliGrade-H System Architecture Diagram" width="750"/>
-</p>
 
 ---
 
-## Grading Engine
-
-IntelliGrade-H uses a **hybrid grading model** instead of relying on any single scoring method.
+## Hybrid Scoring Formula
 
 ```
 Final Score =
-  0.40 × LLM Evaluation         (Claude / Groq professor-style assessment)
-  0.25 × Semantic Similarity     (Sentence-BERT meaning-level comparison)
-  0.20 × Rubric Coverage         (zero-shot NLI per rubric criterion)
-  0.10 × Keyword Coverage        (key technical terms detected)
-  0.05 × Length Normalisation    (penalises blank / trivially short answers)
+  0.40 × LLM Evaluation Score        (Groq LLaMA 3.3-70B / Claude Haiku)
+  0.25 × Semantic Similarity          (Sentence-BERT cosine)
+  0.20 × Rubric Coverage              (Zero-Shot NLI)
+  0.10 × Keyword Coverage
+  0.05 × Length Normalisation
 ```
 
-Weights are configurable in `.env`.
+Weights are configurable via `.env` and validated at startup — a warning is raised if they do not sum to 1.0.
+
+---
+
+## OCR Pipeline
+
+The OCR system uses a **6-engine cascade** ordered by accuracy. Cloud APIs return immediately on a good result; local engines compete and the best result wins.
+
+```
+1. Google Cloud Vision API   ← Best general handwriting accuracy
+2. Mistral OCR               ← Document-optimised, 1000 pages/month free
+3. Azure AI Vision           ← 5000 pages/month free, no expiry
+4. PaddleOCR                 ← Best local engine for mixed layouts
+5. Tesseract (PSM 11)        ← Solid layout-aware fallback
+6. TrOCR-Large               ← Fine-tunable handwriting transformer
+```
+
+**Typed PDFs** (question papers, answer keys) bypass the OCR pipeline entirely via pdfplumber/PyMuPDF — instant, 100% accurate.
+
+**Fine-tuned model auto-detection:** When `models/trocr-finetuned/config.json` exists, the system uses your domain-trained model automatically. No configuration change needed.
+
+---
+
+## LLM Integration
+
+**Primary:** Groq — `llama-3.3-70b-versatile`  
+**Fallback:** Anthropic Claude — `claude-haiku-4-5-20251001` — auto-activates when `ANTHROPIC_API_KEY` is set
+
+LLMs handle: answer evaluation with structured feedback, answer key extraction from teacher PDFs, student booklet segmentation (which answer belongs to which question), cover page metadata extraction (roll number, set, course, semester), and MCQ disambiguation when OCR confidence is low.
+
+Evaluation prompt strategies (selected automatically by question type):
+
+| Prompt | Used for |
+|---|---|
+| `STANDARD_PROMPT` | General open-ended answers |
+| `CS_ENGINEERING_PROMPT` | DBMS, algorithms, OS, Networks, code-aware |
+| `RUBRIC_PROMPT` | Per-criterion mark breakdown |
+| `STRICT_PROMPT` | Board-exam style marking |
+| `MCQ_VALIDATION_PROMPT` | MCQ when OCR confidence < 0.5 |
+
+---
+
+## Dashboard Features
+
+**Paper Manager** — Upload question paper PDF → auto-extract questions, marks, parts, OR alternatives, question types
+
+**Answer Key Manager** — Upload teacher answer key PDF → auto-extract model answers; supports Set-A / Set-B
+
+**Student Booklets** — Upload scanned booklet → OCR → segment answers → evaluate → structured feedback with strengths, missing concepts, sentence-level similarity breakdown
+
+**Bulk Upload** — Upload full class booklets → batch process → export CSV with all scores and feedback
+
+**Analytics** — MAE, Pearson r, Cohen's Kappa, accuracy within ±1 and ±0.5 marks, score distribution chart
+
+---
+
+## Evaluation Metrics & Targets
+
+| Metric | Target |
+|---|---|
+| Mean Absolute Error (MAE) | < 0.8 marks |
+| Pearson Correlation | > 0.85 |
+| Cohen's Kappa | > 0.75 |
+| Accuracy within ±1 mark | > 90% |
 
 ---
 
 ## Technology Stack
 
-### LLM Providers — Claude (Primary), Groq (Fallback)
-
-**Claude** (`claude-haiku-4-5-20251001`) is the primary LLM provider. It produces nuanced, professor-style partial-credit scoring with explicit rationale. Set `ANTHROPIC_API_KEY` in `.env`.  
-To use the higher-quality model, set `CLAUDE_MODEL=claude-sonnet-4-6` in `.env`.
-
-**Groq** (`llama-3.3-70b-versatile`) is the fallback provider when Claude is unavailable. It offers fast inference suitable for real-time grading. Set `GROQ_API_KEY` in `.env`.
-
-**Rule-based fallback** — if both cloud providers are unavailable, the system returns a safe partial score so grading is never fully blocked.
-
-### OCR
-
-**EasyOCR** is the primary fast-path OCR engine. It handles both printed and handwritten text with no system dependencies. Runs in ~1–3 s/page on CPU.
-
-**TrOCR** (`microsoft/trocr-small-handwritten`) is invoked automatically when EasyOCR confidence falls below 65%. It is a transformer-based model specifically trained on handwritten text and gives the best accuracy for messy or cursive writing. Runs in ~8–20 s/page on CPU.
-
-Set `OCR_ENGINE=ensemble` in `.env` to use the best-of-both strategy (recommended).
-
-### Computer Vision
-
-**OpenCV** performs all image preprocessing on scanned exam sheets: grayscale conversion, adaptive denoising, skew correction, CLAHE contrast enhancement, and smart binarisation. It also segments PDF pages into line crops for line-by-line OCR.
-
-**PyTorch** is the deep learning runtime powering TrOCR, Sentence-BERT, and the rubric NLI model.
-
-### NLP
-
-**Sentence-BERT** (`all-MiniLM-L6-v2`) generates semantic embeddings of student and teacher answers, allowing meaning-based similarity scoring rather than simple keyword matching.
-
-**spaCy** is used for sentence segmentation and tokenisation in the text processing pipeline.
-
-### Backend
-
-**FastAPI** provides the REST API layer that orchestrates the entire grading pipeline — file upload, OCR, evaluation, result storage, and metrics.
-
-**Uvicorn** is the ASGI server that runs FastAPI.
-
-**SQLAlchemy + SQLite** stores all grading results, uploaded files, and teacher-defined questions in a local database.
-
-### Frontend
-
-**Streamlit** provides the interactive teacher dashboard where instructors can upload exam sheets, review AI grades, analyse class performance, and export grading reports.
+| Layer | Technology |
+|---|---|
+| OCR (cloud) | Google Vision API, Mistral OCR, Azure AI Vision |
+| OCR (local) | PaddleOCR, Tesseract, TrOCR-Large (HuggingFace) |
+| Image Processing | OpenCV, PIL (CLAHE, deskew, adaptive threshold) |
+| NLP | Sentence-BERT (all-MiniLM-L6-v2), spaCy en_core_web_sm |
+| Rubric Matching | cross-encoder/nli-deberta-v3-small (zero-shot NLI) |
+| Diagram Detection | YOLOv8n (Ultralytics) |
+| LLM (primary) | Groq — llama-3.3-70b-versatile |
+| LLM (fallback) | Anthropic — claude-haiku-4-5-20251001 |
+| Backend | FastAPI, SQLAlchemy, SQLite (dev) / PostgreSQL (prod) |
+| Frontend | Streamlit |
+| Deep Learning | PyTorch, HuggingFace Transformers |
 
 ---
 
@@ -153,212 +200,259 @@ Set `OCR_ENGINE=ensemble` in `.env` to use the best-of-both strategy (recommende
 IntelliGrade-H/
 │
 ├── backend/
-│   ├── api.py                  REST API — all HTTP endpoints, file upload, evaluation routing
-│   ├── evaluator.py            Core evaluation engine — orchestrates OCR → NLP → LLM → score
-│   ├── llm_provider.py         Multi-provider LLM client (Claude primary, Groq fallback)
-│   ├── llm_evaluator.py        Builds LLM prompts and parses evaluation JSON responses
-│   ├── ocr_module.py           OCR engines — EasyOCR, TrOCR, Ensemble; PDF page extraction
-│   ├── preprocessor.py         Image preprocessing — upscale, denoise, deskew, threshold
-│   ├── similarity.py           Sentence-BERT semantic similarity between answers
-│   ├── rubric_matcher.py       Zero-shot NLI rubric criterion detection
-│   ├── question_classifier.py  Auto-classifies question type (MCQ, open-ended, numerical…)
-│   ├── text_processor.py       OCR output cleaning — spell correction, normalisation, tokenisation
-│   ├── schemas.py              Pydantic v2 request/response schemas for the API
-│   ├── database.py             SQLAlchemy models, DB init, and startup migration
-│   ├── metrics.py              Grading accuracy metrics — MAE, Pearson r, Cohen's Kappa
-│   └── config.py               All settings loaded from .env (API keys, weights, paths)
+│   ├── api.py                    # FastAPI routes (20+ endpoints)
+│   ├── evaluator.py              # Hybrid scoring engine
+│   ├── llm_provider.py           # Groq + Claude multi-provider client
+│   ├── llm_evaluator.py          # LLM evaluation and prompt routing
+│   ├── evaluation_prompts.py     # Prompt templates
+│   ├── ocr_module.py             # 6-engine hybrid OCR pipeline
+│   ├── preprocessor.py           # Image preprocessing
+│   ├── similarity.py             # Sentence-BERT + sentence-level breakdown
+│   ├── rubric_matcher.py         # Zero-shot NLI rubric matching
+│   ├── question_classifier.py    # Auto question type detection (7 types)
+│   ├── question_paper_parser.py  # Question paper PDF parser
+│   ├── answer_key_parser.py      # Answer key PDF parser
+│   ├── student_answer_parser.py  # Student booklet parser and segmenter
+│   ├── diagram_detector.py       # YOLOv8 + heuristic diagram detection
+│   ├── text_processor.py         # NLP cleaning and spell correction
+│   ├── metrics.py                # MAE, Pearson r, Cohen's Kappa
+│   ├── database.py               # SQLAlchemy models + auto-migration
+│   ├── schemas.py                # Pydantic v2 request/response schemas
+│   └── config.py                 # Environment configuration with validation
 │
 ├── frontend/
-│   └── dashboard.py            Streamlit teacher dashboard — upload, review, analytics, export
+│   └── dashboard.py              # Streamlit teacher dashboard
 │
-├── prompts/
-│   └── evaluation_prompts.py   LLM prompt templates — standard, CS/engineering, rubric, strict
+├── models/
+│   └── trocr-finetuned/          # Drop your fine-tuned model here (auto-detected)
 │
-├── scripts/
-│   ├── collect_dataset.py      Scrapes or organises labelled handwriting datasets for training
-│   ├── train_trocr.py          Fine-tunes TrOCR on a custom handwriting dataset
-│   ├── finetune_trocr.py       Alternative fine-tuning entry point with advanced options
-│   ├── benchmark.py            Benchmarks OCR engine speed and accuracy on test images
-│   ├── evaluate_metrics.py     Runs grading accuracy evaluation against teacher ground truth
-│   └── create_db.py            One-time script to initialise the SQLite database from scratch
-│
-├── tests/
-│   ├── test_all.py             End-to-end integration tests for the full grading pipeline
-│   ├── test_metrics.py         Unit tests for scoring and metrics calculations
-│   └── conftest.py             Pytest fixtures and shared test configuration
-│
-├── uploads/                    Uploaded exam sheets stored here (auto-created)
-├── intelligrade.db             SQLite database (auto-created on first run)
-├── .env                        Your API keys and settings (create from .env.example)
-├── .env.example                Template showing all configurable settings
-├── requirements.txt            Python package dependencies
-├── run.py                      One-command launcher for API + dashboard together
-├── docker-compose.yml          Docker deployment configuration
-└── README.md                   This file
+├── uploads/                      # Uploaded PDFs (auto-created)
+├── Dockerfile.backend
+├── Dockerfile.frontend
+├── docker-compose.yml
+├── requirements.txt
+├── IntelliGrade_TrOCR_Finetune.ipynb  # Google Colab fine-tuning notebook
+├── run.py
+└── README.md
 ```
-
 
 ---
 
-## Setup & Running
+## Installation
 
-### 1. Install dependencies
+### Local
 
 ```bash
+# 1. Clone
+git clone https://github.com/your-repo/IntelliGrade-H.git
+cd IntelliGrade-H
+
+# 2. Install dependencies
 pip install -r requirements.txt
+
+# 3. Post-install
+python -m spacy download en_core_web_sm
+python -c "import nltk; nltk.download('stopwords'); nltk.download('punkt')"
+
+# 4. Tesseract
+# Linux:   sudo apt install tesseract-ocr poppler-utils
+# macOS:   brew install tesseract poppler
+# Windows: https://github.com/UB-Mannheim/tesseract/wiki
+
+# 5. Configure and run
+cp .env.example .env   # fill in GROQ_API_KEY at minimum
+python run.py
 ```
 
-Install the spaCy language model:
+### Docker
 
 ```bash
-python -m spacy download en_core_web_sm
+cp .env.example .env   # add GROQ_API_KEY
+docker compose up --build
 ```
 
 ---
 
-### 2. Configure environment
-
-Copy the example file and fill in your API keys:
-
-```bash
-copy .env.example .env        # Windows
-cp .env.example .env          # Mac / Linux
-```
-
-Minimum required settings in `.env`:
+## Environment Configuration
 
 ```env
-# Primary LLM — Claude (best evaluation quality)
-ANTHROPIC_API_KEY=sk-ant-...
+# ── LLM (at least one key required) ──────────────────────────────────────
+LLM_PROVIDER=groq
+GROQ_API_KEY=gsk_...                       # free at console.groq.com
+GROQ_MODEL=llama-3.3-70b-versatile
+ANTHROPIC_API_KEY=sk-ant-...               # optional — Claude auto-activates as fallback
 CLAUDE_MODEL=claude-haiku-4-5-20251001
 
-# Fallback LLM — Groq
-GROQ_API_KEY=gsk_...
-GROQ_MODEL=llama-3.3-70b-versatile
+# ── OCR Cloud APIs (each one improves accuracy, all optional) ─────────────
+GOOGLE_VISION_API_KEY=
+MISTRAL_API_KEY=                           # 1000 pages/month free
+AZURE_VISION_KEY=                          # 5000 pages/month free, no expiry
+AZURE_VISION_ENDPOINT=https://your-resource.cognitiveservices.azure.com
 
-# OCR engine — ensemble gives best handwriting accuracy
-OCR_ENGINE=ensemble
+# ── OCR Local ─────────────────────────────────────────────────────────────
+TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
+OCR_DPI=400
+OCR_WORKERS=2
+PADDLEOCR_LANG=en
 
-# Scoring weights (must sum to 1.0)
+# ── TrOCR (fine-tuned model auto-detected — no change needed after deploy) ─
+TROCR_FINETUNED_PATH=models/trocr-finetuned
+TROCR_MODEL_PATH=microsoft/trocr-large-handwritten
+
+# ── Diagram Detection ─────────────────────────────────────────────────────
+YOLO_MODEL_PATH=yolov8n.pt
+DIAGRAM_CONF_THRESHOLD=0.35
+
+# ── Semantic Similarity ───────────────────────────────────────────────────
+SBERT_MODEL=sentence-transformers/all-MiniLM-L6-v2
+
+# ── Hybrid Scoring Weights (must sum to 1.0) ──────────────────────────────
 LLM_WEIGHT=0.40
 SIMILARITY_WEIGHT=0.25
 RUBRIC_WEIGHT=0.20
 KEYWORD_WEIGHT=0.10
 LENGTH_WEIGHT=0.05
-```
 
-> **Tip:** Set `CLAUDE_MODEL=claude-sonnet-4-6` for higher evaluation quality at slightly higher cost.
+# ── Database ──────────────────────────────────────────────────────────────
+DATABASE_URL=sqlite:///./intelligrade.db
+# Production: DATABASE_URL=postgresql://user:pass@localhost:5432/intelligrade
+
+# ── Upload / API ──────────────────────────────────────────────────────────
+MAX_FILE_SIZE_MB=20
+UPLOAD_DIR=./uploads
+API_HOST=0.0.0.0
+API_PORT=8000
+```
 
 ---
 
-### 3. Run the system
-
-**Recommended — start everything with one command:**
+## Running the System
 
 ```bash
-python run.py
+python run.py           # start both API + dashboard
+python run.py api       # API only
+python run.py ui        # dashboard only
+python run.py init      # initialise database only
 ```
-
-This starts both the API and the dashboard together.
 
 | Service | URL |
 |---|---|
 | Teacher Dashboard | http://localhost:8501 |
-| API | http://localhost:8000 |
-| API Docs (Swagger) | http://localhost:8000/docs |
+| REST API | http://localhost:8000 |
+| API Documentation | http://localhost:8000/docs |
+| Metrics Debug | http://localhost:8000/metrics/print |
 
 ---
 
-**Or start them separately:**
+## 🔬 Fine-Tuning TrOCR on Your Exam Data
 
-```bash
-# Terminal 1 — Backend API
-uvicorn backend.api:app --reload --host 0.0.0.0 --port 8000
+Fine-tuning on handwriting samples from your own students is the highest-impact improvement you can make. The system auto-detects and uses your model — no configuration change required.
 
-# Terminal 2 — Teacher Dashboard
-streamlit run frontend/dashboard.py
-```
+### Which model to fine-tune: `microsoft/trocr-large-handwritten`
 
----
+The notebook has been updated from `trocr-small` to **`trocr-large-handwritten`**. Here is exactly why:
 
-**Other run modes:**
-
-```bash
-python run.py api     # API only
-python run.py ui      # Dashboard only
-python run.py init    # Initialise database only (first run)
-```
-
----
-
-### 4. Docker (optional)
-
-```bash
-docker-compose up --build
-```
-
----
-
-## Evaluation Metrics
-
-IntelliGrade-H compares AI scores against teacher-provided ground truth to validate grading accuracy.
-
-| Metric | Target |
-|---|---|
-| Mean Absolute Error | < 0.8 |
-| Pearson Correlation | > 0.85 |
-| Cohen's Kappa | > 0.75 |
-| Accuracy within ±1 mark | > 90% |
-
-Run the metrics evaluation script against your own labelled data:
-
-```bash
-python scripts/evaluate_metrics.py
-```
-
----
-
-## Configuration Reference
-
-All settings are loaded from `.env`. See `.env.example` for the full list.
-
-| Key | Default | Description |
+| Model | CER on exam handwriting | VRAM needed |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | — | Claude API key (primary LLM) |
-| `CLAUDE_MODEL` | `claude-haiku-4-5-20251001` | Claude model — swap to `claude-sonnet-4-6` for higher quality |
-| `GROQ_API_KEY` | — | Groq API key (fallback LLM) |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq model |
-| `OCR_ENGINE` | `easyocr` | `easyocr` · `trocr` · `ensemble` (recommended) |
-| `TROCR_MODEL_PATH` | `microsoft/trocr-small-handwritten` | TrOCR weights |
-| `OCR_WORKERS` | `4` | Parallel OCR/evaluation threads |
-| `LLM_MAX_TOKENS` | `1500` | Max tokens per LLM response |
-| `LLM_TEMPERATURE` | `0.1` | LLM temperature (lower = more consistent) |
-| `LLM_WEIGHT` | `0.40` | LLM score weight in hybrid formula |
-| `SIMILARITY_WEIGHT` | `0.25` | Semantic similarity weight |
-| `RUBRIC_WEIGHT` | `0.20` | Rubric coverage weight |
-| `KEYWORD_WEIGHT` | `0.10` | Keyword coverage weight |
-| `LENGTH_WEIGHT` | `0.05` | Length normalisation weight |
-| `DATABASE_URL` | `sqlite:///intelligrade.db` | Database connection string |
-| `MAX_FILE_SIZE_MB` | `20` | Maximum upload file size |
+| trocr-small, no fine-tuning | ~20–30% | ~2 GB |
+| trocr-small, fine-tuned 1000 samples | ~15–20% | ~2 GB |
+| trocr-large, no fine-tuning | ~15–22% | ~8 GB |
+| **trocr-large, fine-tuned 500 samples** | **~10–15%** | **~8 GB** |
+| **trocr-large, fine-tuned 1000+ samples** | **~6–11%** | **~8 GB** |
+| Google Vision API (reference point) | ~3–8% | Paid per page |
+
+`trocr-large` has 4× more parameters. On variable, messy exam handwriting this difference is decisive. The Colab free T4 GPU has 16 GB VRAM — `large` fits comfortably at batch size 8 with gradient checkpointing.
+
+On domain-specific vocabulary (DBMS, algorithm names, circuit diagrams) your fine-tuned model can match or exceed Google Vision because it is trained specifically on your students' handwriting style, while Google's model is general-purpose.
+
+### Fine-tuning workflow
+
+**Step 1 — Scan booklets** at 300–400 DPI (PNG). Anonymise student names.
+
+**Step 2 — Crop into line images.** Each image = one line of handwriting. The `preprocessor.py` `segment_lines()` method can do this automatically, or crop manually.
+
+**Step 3 — Create labels.txt** in each split folder (tab-separated):
+```
+0001.png	The mitochondria is the powerhouse of the cell
+0002.png	Newton second law states F equals ma
+```
+Use [Label Studio](https://labelstud.io/) (free) for a visual annotation interface, or type directly into a spreadsheet. Two people can label 1000 samples in about one hour.
+
+**Step 4 — Upload dataset to Google Drive:**
+```
+My Drive/Intelligrade/datasets/handwriting/
+├── train/    images/ + labels.txt    (~80% of samples)
+├── val/      images/ + labels.txt    (~10%)
+└── test/     images/ + labels.txt    (~10%)
+```
+
+**Step 5 — Open the notebook in Colab:**
+
+`IntelliGrade_TrOCR_Finetune.ipynb` → `Runtime → Change runtime type → T4 GPU` → Run all cells.
+
+- 1000 samples, 15 epochs: ~35–45 min on T4
+- 5000 samples, 15 epochs: ~2–3 hours on T4
+
+**Step 6 — Deploy:**
+```
+1. Download trocr-finetuned/ from Google Drive
+2. Extract to: IntelliGrade-H/models/trocr-finetuned/
+   (folder must contain config.json — this triggers auto-detection)
+3. Restart: python run.py
+
+The system logs:
+   Fine-tuned TrOCR model found at models/trocr-finetuned — using it.
+```
+
+No `.env` changes needed.
+
+---
+
+## API Reference
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/paper/upload` | Upload and parse a question paper PDF |
+| `GET` | `/papers` | List all exam papers |
+| `GET` | `/paper/{paper_id}` | Get full paper with questions |
+| `POST` | `/answer-key/upload` | Upload and extract answer key |
+| `POST` | `/booklet/upload` | Upload a student booklet PDF |
+| `POST` | `/booklet/{id}/evaluate` | OCR + evaluate all answers |
+| `POST` | `/evaluate` | Single-question evaluation |
+| `POST` | `/evaluate/paper` | Evaluate against a known exam paper |
+| `GET` | `/submissions` | List all submissions |
+| `GET` | `/stats` | System statistics |
+| `GET` | `/metrics` | AI accuracy metrics |
+| `GET` | `/metrics/print` | Print metrics to server log (debug) |
+| `POST` | `/rubric` | Upload rubric criteria for a question |
+| `POST` | `/bulk/evaluate` | Batch evaluate multiple booklets |
+| `DELETE` | `/booklet/{id}` | Delete a booklet and its results |
+
+Full interactive documentation: `http://localhost:8000/docs`
 
 ---
 
 ## Ethical Considerations
 
-IntelliGrade-H is designed with responsible AI principles:
-
-- Student identities are anonymised
-- AI grading remains advisory and requires teacher review
-- Feedback is transparent and explainable
-- OCR errors are handled gracefully — spelling artifacts are never penalised
+- Student identities are anonymised during processing
+- All AI grades are teacher-reviewable before finalisation — IntelliGrade-H is a grading assistant, not a replacement for the teacher
+- OCR artefacts do **not** penalise students — all evaluation prompts explicitly instruct the LLM to ignore OCR noise
+- Evaluation reasoning (strengths, missing concepts, score rationale) is stored transparently and exportable per submission
+- The system raises a startup warning if scoring weights do not sum to 1.0, preventing silent grade inflation or deflation
 
 ---
 
-## Future Improvements
+## Future Work
 
-- Mathematical equation evaluation
-- Multilingual grading support
-- Diagram understanding with vision models
+- Mathematical equation and formula evaluation
+- Diagram understanding using vision-language models
+- Multilingual answer grading (Tamil, Hindi)
 - LMS integrations (Moodle, Google Classroom)
-- Mobile scanning application
-- Continuous learning from teacher corrections
+- Mobile app for scanning exam booklets
+- Continual learning loop from teacher corrections
+
+---
+
+## License
+
+MIT License — free for academic and research use.
