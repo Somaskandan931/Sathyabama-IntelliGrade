@@ -31,7 +31,7 @@
 3. [Key Features](#key-features)
 4. [System Architecture](#️-system-architecture)
 5. [Image Preprocessing](#image-preprocessing)
-6. [OCR Pipeline](#ocr-pipeline)
+6. [OCR Pipeline](#ocr-pipeline) — [What is OCR?](#what-is-ocr) · [Engine Specialities](#engine-specialities)
 7. [Text Processing](#text-processing)
 8. [Exam Parsers](#exam-parsers)
 9. [Question Classifier](#question-classifier)
@@ -210,6 +210,22 @@ Handwritten Booklet (PDF / Image)
 
 ## OCR Pipeline
 
+### What is OCR?
+
+**OCR (Optical Character Recognition)** is a technology that converts images of text — whether scanned documents, photographs, or handwritten pages — into machine-readable text that a computer can process, search, and analyse.
+
+At its core, OCR works by:
+1. **Detecting** regions of an image that contain text
+2. **Segmenting** those regions into individual characters or words
+3. **Recognising** each character by comparing it against learned patterns
+4. **Outputting** a sequence of characters as a digital string
+
+Modern OCR systems use deep learning models (CNNs, Transformers) trained on millions of document images. They can handle a variety of challenges including skewed pages, varying fonts, mixed languages, and — critically for this system — **handwritten text**, which is far harder than printed text due to individual variation in style, spacing, and stroke shape.
+
+In the context of IntelliGrade-H, OCR is the bridge between a physical exam booklet and the AI evaluation engine — without accurate OCR, even the best grading model cannot produce fair results.
+
+---
+
 `ocr_module.py` implements a **6-engine hybrid cascade** with two tiers.
 
 ### Typed PDF Fast-Path
@@ -228,6 +244,17 @@ Priority  Engine              Notes
 5         Tesseract (PSM 11)   Layout-aware; tries multiple configs, picks best
 6         TrOCR-Large          Handwriting-trained transformer; line-by-line
 ```
+
+### Engine Specialities
+
+| Engine | Speciality | Why It's Used Here |
+|---|---|---|
+| **Google Cloud Vision** | Industry-leading general-purpose OCR; handles printed text, handwriting, and mixed layouts with state-of-the-art accuracy (~3–8% Character Error Rate). Understands complex document structures. | First choice for highest accuracy. Returns fast via API. Covers the vast majority of exam booklets well. |
+| **Mistral OCR** | Document-optimised cloud OCR with strong layout understanding. Excels at structured documents with tables, columns, and forms. Generous free tier (1,000 pages/month). | Strong fallback when Google Vision is unavailable; particularly good at structured answer sheets with question-number prefixes. |
+| **Azure AI Vision** | Microsoft's enterprise-grade OCR; highly reliable on dense text, multi-language documents, and low-contrast scans. Very generous free tier (5,000 pages/month, no expiry). | Robust cloud backup; wide language support is useful for mixed-language engineering booklets. |
+| **PaddleOCR** | Open-source local OCR by Baidu; best-in-class for **mixed layout detection** (paragraphs, tables, equations side-by-side). Runs fully offline. Excellent on printed + mixed handwritten content. | Best local engine for complex page layouts — handles multi-column answer booklets and answer sheets that mix diagrams with text. |
+| **Tesseract (PSM 11)** | The most battle-tested open-source OCR engine (Google). Highly configurable via Page Segmentation Modes (PSM); `--psm 11` treats the page as sparse text, ideal for handwritten pages where text is not neatly arranged in paragraphs. Tries multiple PSM modes internally and picks the best. | Solid local fallback with decades of tuning. Its multi-PSM retry loop makes it adaptive to unusual booklet layouts. |
+| **TrOCR-Large** | Microsoft's Transformer-based OCR model (`trocr-large-handwritten`) fine-tuned specifically on **handwritten English text**. Processes images line-by-line using a vision encoder + language decoder architecture. Supports domain fine-tuning on institution-specific handwriting. | The only engine purpose-built for handwriting recognition. Used as the final fallback and as the fine-tuning target for institutions that want to adapt the system to their students' handwriting styles. |
 
 **Cloud engine behaviour:** As soon as a cloud engine returns a result with more than 10 characters, it is returned immediately and the remaining engines are skipped.
 
