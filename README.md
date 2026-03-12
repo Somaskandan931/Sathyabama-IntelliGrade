@@ -34,22 +34,24 @@
 6. [OCR Pipeline](#ocr-pipeline)
 7. [Text Processing](#text-processing)
 8. [Exam Parsers](#exam-parsers)
-9. [Evaluation Engine](#evaluation-engine)
-10. [Hybrid Scoring Formula](#hybrid-scoring-formula)
-11. [LLM Integration](#llm-integration)
-12. [Dashboard Features](#dashboard-features)
-13. [Evaluation Metrics & Targets](#evaluation-metrics--targets)
-14. [Technology Stack](#technology-stack)
-15. [Project Structure](#project-structure)
-16. [Quick Start](#quick-start)
-17. [Installation](#installation)
-18. [Environment Configuration](#environment-configuration)
-19. [Running the System](#running-the-system)
-20. [Fine-Tuning TrOCR on Your Exam Data](#-fine-tuning-trocr-on-your-exam-data)
-21. [API Reference](#api-reference)
-22. [Ethical Considerations](#ethical-considerations)
-23. [Future Work](#future-work)
-24. [License](#license)
+9. [Question Classifier](#question-classifier)
+10. [Evaluation Engine](#evaluation-engine)
+11. [Hybrid Scoring Formula](#hybrid-scoring-formula)
+12. [LLM Integration](#llm-integration)
+13. [Dashboard Features](#dashboard-features)
+14. [Evaluation Metrics & Targets](#evaluation-metrics--targets)
+15. [Database Schema](#database-schema)
+16. [Technology Stack](#technology-stack)
+17. [Project Structure](#project-structure)
+18. [Quick Start](#quick-start)
+19. [Installation](#installation)
+20. [Environment Configuration](#environment-configuration)
+21. [Running the System](#running-the-system)
+22. [Fine-Tuning TrOCR on Your Exam Data](#-fine-tuning-trocr-on-your-exam-data)
+23. [API Reference](#api-reference)
+24. [Ethical Considerations](#ethical-considerations)
+25. [Future Work](#future-work)
+26. [License](#license)
 
 ---
 
@@ -58,11 +60,11 @@
 Universities and colleges that conduct handwritten subjective examinations face a serious operational bottleneck at every evaluation cycle:
 
 - **Time-consuming** — A single faculty member may need days to evaluate hundreds of answer booklets, delaying result publication.
-- **Inconsistent** — Scores for the same answer can vary significantly depending on the evaluator, their mood, or fatigue. Research in educational assessment shows inter-rater disagreement of ±1–2 marks is common even among experienced faculty.
-- **Unscalable** — As cohort sizes grow, the effort required grows linearly. There is no economies-of-scale benefit in manual grading.
+- **Inconsistent** — Scores for the same answer can vary significantly depending on the evaluator, their mood, or fatigue. Inter-rater disagreement of ±1–2 marks is common even among experienced faculty.
+- **Unscalable** — As cohort sizes grow, the effort required grows linearly with no economies-of-scale benefit.
 - **Opaque** — Students rarely receive structured feedback explaining *why* they lost marks — only a number.
 
-**IntelliGrade-H automates this entire pipeline end-to-end.** A teacher uploads scanned booklets and answer keys; the system returns marks, detailed feedback, and analytics — all within minutes. Every AI-generated grade is teacher-reviewable and editable before finalisation, keeping the human in control.
+**IntelliGrade-H automates this entire pipeline end-to-end.** A teacher uploads scanned booklets and answer keys; the system returns marks, detailed feedback, and analytics — all within minutes. Every AI-generated grade is teacher-reviewable and editable before finalisation.
 
 ---
 
@@ -70,25 +72,25 @@ Universities and colleges that conduct handwritten subjective examinations face 
 
 Here is the complete journey of a single student booklet through the system:
 
-**1. Upload** — Teacher uploads a scanned PDF or image of the student's handwritten booklet via the Streamlit dashboard or REST API.
+**1. Upload** — Teacher uploads a scanned PDF or image of the student's handwritten booklet via the Streamlit dashboard or `POST /booklet/upload`.
 
-**2. Preprocessing** — OpenCV cleans the scanned image: corrects page skew (deskew), removes noise, enhances contrast using CLAHE (Contrast Limited Adaptive Histogram Equalisation), and applies adaptive binarisation to make handwriting sharp and machine-readable.
+**2. Preprocessing** — OpenCV cleans the image: upscales if the page is narrower than 1200 px (phone photos), corrects skew, denoises adaptively, applies CLAHE contrast enhancement, and binarises using smart thresholding.
 
-**3. OCR** — The cleaned image passes through a 6-engine hybrid cascade. Cloud APIs (Google Vision, Mistral, Azure) are tried first for maximum accuracy. If unavailable or low-confidence, local engines (PaddleOCR, Tesseract, TrOCR-Large) take over. The best result is selected and returned.
+**3. OCR** — The cleaned image passes through a 6-engine hybrid cascade. Cloud APIs are tried first. Local engines compete and the winner is selected by `real_word_count × 0.7 + confidence × 0.3`. Typed PDFs bypass OCR entirely — text is extracted directly if pdfplumber finds more than 50 characters.
 
-**4. Text Processing** — The raw OCR output is cleaned with spaCy: tokenisation, stopword handling, spell correction (targeting domain-specific vocabulary like subject keywords), and text normalisation.
+**4. Text Processing** — Raw OCR output is spell-corrected (domain-aware, CS/engineering vocabulary), normalised, and tokenised with spaCy.
 
-**5. Parsing** — The system identifies which text belongs to which question using the Student Answer Parser. This uses LLM-assisted segmentation to handle numbered answers, question parts (a, b, c), and even out-of-order answers.
+**5. Parsing** — The Student Answer Parser segments the booklet into individual answers, maps each to its question number (handling out-of-order answers and multi-page continuations), and extracts cover page metadata via LLM.
 
-**6. Evaluation** — Each answer is evaluated against the model answer from the Answer Key using five parallel methods: LLM reasoning, Sentence-BERT semantic similarity, zero-shot NLI rubric matching, keyword coverage, and length normalisation.
+**6. Classification** — Each question is classified into one of 7 types by the Question Classifier (LLM first, rule-based fallback).
 
-**7. Scoring** — A weighted hybrid score is computed and bounded to the maximum marks for that question.
+**7. Evaluation** — Deterministic question types (MCQ, True/False, Numerical) are graded exactly. Open-ended types use the full 5-component hybrid pipeline: LLM + Sentence-BERT + Rubric NLI + Keyword Coverage + Length Normalisation.
 
-**8. Feedback** — The LLM generates structured feedback: strengths identified, missing concepts, improvement suggestions, and a sentence-level similarity breakdown.
+**8. Scoring** — A weighted hybrid score is computed, clamped to [0, max_marks].
 
-**9. Review** — The teacher sees all scores and feedback on the dashboard. They can adjust any mark before finalising.
+**9. Feedback** — The LLM returns strengths, missing concepts, improvement suggestions, a confidence score, and a score rationale.
 
-**10. Export** — Final marks and feedback are exportable as CSV for uploading to the institution's LMS or mark register.
+**10. Review & Export** — Teachers review and optionally adjust scores on the dashboard. Final marks are exportable as CSV.
 
 ---
 
@@ -96,20 +98,27 @@ Here is the complete journey of a single student booklet through the system:
 
 | Feature | Description |
 |---|---|
-| 6-Engine Hybrid OCR | Google Vision → Mistral → Azure → PaddleOCR → Tesseract → TrOCR cascade with automatic best-result selection |
-| Fine-Tunable TrOCR | `trocr-large-handwritten` is auto-replaced by your domain-trained model when placed in `models/trocr-finetuned/` |
-| Dual LLM Support | Groq LLaMA 3.3-70B (primary, fast, free) + Anthropic Claude Haiku (automatic fallback when API key is set) |
-| Semantic Similarity | Sentence-BERT cosine similarity with sentence-level breakdown showing exactly which parts of the answer matched |
-| Rubric Matching | Zero-shot NLI rubric coverage via `cross-encoder/nli-deberta-v3-small` — no rubric training data required |
-| Answer Key Parser | Auto-extracts model answers from teacher PDF (both typed and scanned), supports Set-A / Set-B variants |
-| Question Paper Parser | Detects question parts, marks, OR alternatives, and 7 question types automatically from PDF |
-| 7 Question Types | Auto-classifies: MCQ, Short Answer, Long Answer, Descriptive, Code, Diagram, Mathematical |
-| Bulk Grading | Evaluate an entire class in one upload with full CSV export of marks and feedback |
-| Analytics Dashboard | MAE, Pearson r, Cohen's Kappa, accuracy within ±1 and ±0.5 marks, score distribution charts |
-| Diagram Detection | YOLOv8n detects whether student drew required diagrams — awarded bonus consideration |
-| Cover Page Extraction | LLM extracts roll number, course code, semester, set from booklet cover page automatically |
-| Docker Ready | One-command deployment with PostgreSQL support for production |
-| Teacher Override | Every AI grade is editable — IntelliGrade-H is a grading assistant, not a replacement |
+| 6-Engine Hybrid OCR | Google Vision → Mistral → Azure → PaddleOCR → Tesseract → TrOCR cascade; winner chosen by real-word + confidence heuristic |
+| Smart Typed-PDF Detection | If pdfplumber extracts >50 chars, OCR is skipped entirely — instant, 100% accurate for typed documents |
+| Fine-Tunable TrOCR | `trocr-large-handwritten` auto-replaced by domain-trained model when `models/trocr-finetuned/config.json` exists |
+| Dual LLM Support | Groq LLaMA 3.3-70B (primary) + Anthropic Claude Haiku (auto-fallback); configurable with `LLM_PROVIDER` |
+| LLM Retry with Backoff | 3 attempts for Groq, 2 for Claude; exponential backoff on rate-limit errors |
+| Semantic Similarity | Sentence-BERT cosine similarity + `compute_sentence_level()` per-sentence breakdown matrix |
+| Rubric Matching | Zero-shot NLI via `cross-encoder/nli-deberta-v3-small`; optional BERT fine-tuning; skipped for MCQ/True-False/Numerical |
+| 7 Question Types | MCQ, True/False, Fill-in-Blank, Short Answer, Open-Ended, Numerical, Diagram — classified automatically |
+| Deterministic Grading | MCQ and True/False: binary exact match. Numerical: extracted number vs expected. No LLM needed. |
+| MCQ LLM Fallback | When OCR confidence < 0.5, LLM reads the options and infers the selected answer |
+| 5 Prompt Templates | STANDARD, CS_ENGINEERING, RUBRIC, STRICT, MCQ_VALIDATION — auto-selected by question type |
+| Dynamic Exam Paper | Papers stored in DB with marks-per-question from PDF — no hardcoding needed |
+| OR-Alternative Questions | Both alternatives stored; system evaluates whichever the student answered |
+| Answer Key Parser | Supports Set-A / Set-B, typed + scanned, inline rubric extraction |
+| Bulk Grading | `evaluate_batch()` processes a full class; `POST /booklet/{id}/evaluate` runs all answers in one call |
+| Analytics | MAE, Pearson r, Cohen's Kappa (linear-weighted), accuracy within ±1 and ±0.5 marks |
+| MetricsSnapshot | Persistent DB table caches metric history; recomputed in background after each batch |
+| Image Upscaling | Phone-camera photos narrower than 1200 px are 2× upscaled before processing |
+| Adaptive Denoising | `fastNlMeans` for noisy images (std > 20), `bilateral` filter for clean scans |
+| Teacher Override | `PATCH /booklet/{id}/answer/{q_num}` and `PATCH /paper/{paper_id}/question/{q_num}` for manual corrections |
+| Docker Ready | One-command deployment with PostgreSQL support |
 
 ---
 
@@ -123,185 +132,267 @@ Here is the complete journey of a single student booklet through the system:
 Handwritten Booklet (PDF / Image)
            │
            ▼
-   Image Preprocessing
-   (OpenCV — deskew, denoise, CLAHE, smart threshold)
+   Image Preprocessing (preprocessor.py)
+   upscale(<1200px) → grayscale → adaptive-denoise
+   → deskew (Hough) → CLAHE(3.0) → smart-threshold
            │
            ▼
-      Hybrid OCR Pipeline (6 engines)
-  Google Vision → Mistral OCR → Azure AI Vision
-    → PaddleOCR → Tesseract → TrOCR-Large
+      Hybrid OCR Pipeline (ocr_module.py)
+  ┌── Typed PDF? pdfplumber/PyMuPDF ──────────────┐
+  │   (>50 chars → return immediately)            │
+  └── Scanned/Handwritten: ───────────────────────┘
+      Cloud: Google Vision → Mistral → Azure
+      Local: PaddleOCR + Tesseract + TrOCR-Large
+      Winner: real_words×0.7 + confidence×0.3
            │
            ▼
-     Text Processing
-   (spaCy + spell correction + normalisation)
+     Text Processing (text_processor.py)
+   spell-correct → normalise → tokenise (spaCy)
            │
            ▼
       Exam Parsers
-  ┌────────────────────┐
-  │ Question Paper     │
-  │ Answer Key         │
-  │ Student Booklet    │
-  └────────────────────┘
+  ┌────────────────────────┐
+  │ Question Paper Parser  │ → ExamPaper / ExamQuestion (DB)
+  │ Answer Key Parser      │ → teacher answers per question
+  │ Student Booklet Parser │ → StudentBooklet / StudentAnswerText (DB)
+  └────────────────────────┘
            │
            ▼
-    Evaluation Engine
-  ┌────────────────────┐
-  │ LLM Evaluator      │  ← Groq / Claude
-  │ Sentence-BERT      │
-  │ Rubric Matcher     │
-  │ Keyword Coverage   │
-  │ Diagram Detector   │  ← YOLOv8
-  └────────────────────┘
+   Question Classifier (question_classifier.py)
+   LLM → rule-based fallback → 7 types
+           │
+           ├── Deterministic (MCQ / True-False / Numerical)
+           │       exact match / number extraction
+           │
+           └── Open-Ended (Short / Long / Diagram / Fill-Blank)
+                   Evaluation Engine (evaluator.py)
+                ┌────────────────────────┐
+                │ LLM Evaluator          │ ← Groq / Claude
+                │ Sentence-BERT          │ ← cosine + sentence-level
+                │ Rubric Matcher (NLI)   │ ← DeBERTa cross-encoder
+                │ Keyword Coverage       │
+                │ Length Normalisation   │
+                │ Diagram Detector       │ ← YOLOv8
+                └────────────────────────┘
            │
            ▼
    Hybrid Scoring Engine
+   (LLM×0.40 + Similarity×0.25 + Rubric×0.20
+    + Keyword×0.10 + Length×0.05) clamped to max_marks
            │
            ▼
-   Teacher Dashboard (Streamlit)
+   Teacher Dashboard (Streamlit) / REST API (FastAPI)
 ```
 
 ---
 
 ## Image Preprocessing
 
-Raw scanned booklets are rarely clean. Students scan pages with their phones, pages are skewed, lighting is uneven, and ink strokes vary in thickness. The `preprocessor.py` module applies a multi-stage pipeline before any OCR is attempted:
+`preprocessor.py` — `ImagePreprocessor` class applies a 6-stage pipeline before any OCR is attempted.
 
-**Deskew** — Hough transform detects the dominant angle of text lines and rotates the page to correct misalignment. Skewed text dramatically reduces OCR accuracy.
+**Stage 1 — Upscale small images** (`_upscale_small`): Pages narrower than 1200 px (e.g. phone camera photos) are 2× upscaled using Lanczos4 interpolation. This dramatically improves OCR accuracy on low-resolution scans.
 
-**Denoising** — Gaussian and median filters remove scanner artifacts and paper grain without blurring ink strokes.
+**Stage 2 — Greyscale** (`_to_grayscale`): Converts BGR/RGB to greyscale for all subsequent processing.
 
-**CLAHE (Contrast Limited Adaptive Histogram Equalisation)** — Improves local contrast in regions where handwriting is faint or the background is uneven (common with pencil-written answers or low-quality scans).
+**Stage 3 — Adaptive Denoising** (`_denoise`): Chooses algorithm based on image noise level:
+- If `np.std(img) > 20` (noisy, e.g. phone photo): `fastNlMeansDenoising(h=10)` — aggressive noise removal
+- Otherwise (clean scanner): `bilateralFilter(d=5)` — preserves edges, ~3 ms
 
-**Adaptive Binarisation** — Converts to binary (black/white) using locally-computed thresholds rather than a global threshold. This handles pages where some regions are darker than others — for example, shadows near the spine of a booklet.
+**Stage 4 — Deskew** (`_deskew`): Runs Hough line detection, computes the median angle of text lines, and rotates the image to correct skew. Skew correction is only applied if the angle exceeds 0.5°.
 
-**Line Segmentation** — The `segment_lines()` method uses horizontal projection profiles to identify individual lines of text and crop them into separate images. This is required for TrOCR, which operates on single-line images, and also for the fine-tuning dataset preparation workflow.
+**Stage 5 — CLAHE** (`_enhance_contrast`): Contrast Limited Adaptive Histogram Equalisation with `clipLimit=3.0` and `tileGridSize=(8,8)`. Corrects uneven illumination — important for pencil-written answers and shadows near the booklet spine.
+
+**Stage 6 — Smart Threshold** (`_threshold`): Otsu's threshold is computed first. If `otsu_t < 50` (faint or light ink), switches to adaptive Gaussian thresholding with `blockSize=31, C=15`. This handles mixed-darkness pages.
+
+**Line Segmentation** (`segment_lines`): Uses horizontal projection profiles to find line boundaries. Each line is padded by 4 px top/bottom before being cropped into a PIL Image. This output feeds TrOCR (which expects single-line images) and is also used for fine-tuning dataset preparation.
 
 ---
 
 ## OCR Pipeline
 
-The OCR system uses a **6-engine cascade** ordered by accuracy. The system tries each engine in sequence; cloud APIs return as soon as they produce a high-confidence result, avoiding unnecessary API calls. Local engines all run and the best result is selected.
+`ocr_module.py` implements a **6-engine hybrid cascade** with two tiers.
+
+### Typed PDF Fast-Path
+
+If `pdfplumber` extracts more than 50 characters from a PDF, the system returns that text immediately without running any OCR. This gives 100% accuracy on typed question papers and answer keys.
+
+### Scanned / Handwritten Pipeline
 
 ```
-1. Google Cloud Vision API   ← Best general handwriting accuracy (~3–8% CER)
-2. Mistral OCR               ← Document-optimised, 1000 pages/month free tier
-3. Azure AI Vision           ← 5000 pages/month free, no expiry on free quota
-4. PaddleOCR                 ← Best local engine for mixed text/diagram layouts
-5. Tesseract (PSM 11)        ← Solid layout-aware fallback, fully offline
-6. TrOCR-Large               ← Fine-tunable handwriting transformer (HuggingFace)
+Priority  Engine              Notes
+─────────────────────────────────────────────────────────────────────
+1         Google Cloud Vision Best general accuracy (~3–8% CER)
+2         Mistral OCR          Document-optimised; 1000 pages/month free
+3         Azure AI Vision      5000 pages/month free, no expiry
+4         PaddleOCR            Best local engine for mixed layouts
+5         Tesseract (PSM 11)   Layout-aware; tries multiple configs, picks best
+6         TrOCR-Large          Handwriting-trained transformer; line-by-line
 ```
 
-**How the cascade works in practice:**
+**Cloud engine behaviour:** As soon as a cloud engine returns a result with more than 10 characters, it is returned immediately and the remaining engines are skipped.
 
-- If `GOOGLE_VISION_API_KEY` is set and returns a result with confidence above threshold, the pipeline stops there and returns immediately.
-- If Google Vision is unavailable or confidence is low, Mistral OCR is tried next.
-- If no cloud API key is configured, the system falls through directly to local engines.
-- Local engines (PaddleOCR, Tesseract, TrOCR) all run in parallel (configurable via `OCR_WORKERS`), and their outputs are compared using a confidence scoring heuristic — the result with the best character-level confidence wins.
+**Local engine scoring:** All three local engines run (concurrently via `OCR_WORKERS`). The winner is selected by:
 
-**Typed PDFs bypass OCR entirely.** When a teacher uploads a typed question paper or answer key PDF, the system detects that the PDF contains selectable text and extracts it directly via pdfplumber or PyMuPDF. This is instant and 100% accurate — no OCR is involved.
+```
+score = real_word_count × 0.7 + confidence × 0.3
+```
 
-**Fine-tuned model auto-detection:** If `models/trocr-finetuned/config.json` exists on disk, TrOCR-Large is automatically replaced with your domain-trained model. The system logs `Fine-tuned TrOCR model found at models/trocr-finetuned — using it.` at startup. No configuration change needed.
+`real_word_count` counts tokens containing at least one alphabetic character. This prevents an engine that returns a high-confidence but short/garbled output from winning over one with more real text.
 
-**OCR confidence scoring** is computed per-engine using character-level probability outputs where available (Google Vision, TrOCR) or word-level confidence scores (Tesseract). For engines that provide no confidence signal (Mistral), a heuristic based on dictionary word hit rate is used.
+**Tesseract multi-config:** Tries multiple PSM modes internally and selects the one with the highest `real_words + confidence` score.
+
+**Fine-tuned TrOCR auto-detection:** At startup, `_resolve_trocr_model()` checks if `models/trocr-finetuned/config.json` exists. If so, that model is used instead of the default HuggingFace model. The system logs: `Fine-tuned TrOCR model found at 'models/trocr-finetuned' — using it.`
+
+**Confidence values by engine:**
+- Google Vision: page-level block confidence from API
+- Tesseract: average word confidence from `--psm` output
+- TrOCR: token-level generation probabilities
+- Mistral: fixed at 0.88 (API does not return confidence); a real-word hit-rate heuristic is computed separately
 
 ---
 
 ## Text Processing
 
-After OCR, raw extracted text goes through the `text_processor.py` pipeline before evaluation:
+`text_processor.py` — `TextProcessor` class cleans OCR output before evaluation.
 
-**Tokenisation** — spaCy `en_core_web_sm` tokenises the text into sentences and words with part-of-speech tagging. This enables sentence-level similarity analysis downstream.
+**Normalisation** (`_normalize`): Removes non-printable characters, converts line breaks to sentence separators (but avoids double-punctuation when the line already ends with `.!?`), fixes missing space after periods, and normalises Unicode quotes.
 
-**Spell Correction** — A domain-aware spell corrector (pyspellchecker with a custom vocabulary of CS/engineering terms) corrects common OCR misreads. For example: `"algoriThm"` → `"algorithm"`, `"datahase"` → `"database"`. Domain terms like `"DBMS"`, `"TCP/IP"`, `"SQL"` are whitelisted to avoid being "corrected" to common English words.
+**Spell Correction** (`_spellcheck`): Uses `pyspellchecker` with a custom domain vocabulary pre-loaded on init including: algorithm, preprocessing, tokenization, backpropagation, gradient, sigmoid, relu, convolution, transformer, embedding, cosine, classifier, regression, hyperparameter, overfitting, underfitting, epoch, batch, lstm, attention, bert, scalability, bandwidth, latency, throughput, synchronous, asynchronous, microservices, polymorphism, encapsulation, inheritance.
 
-**Text Normalisation** — Converts to lowercase, removes excess whitespace, normalises punctuation, expands common abbreviations (e.g. `"w.r.t"` → `"with respect to"`), and strips page headers/footers that OCR may have picked up.
+Words are skipped (left uncorrected) if they: contain digits, are ALL CAPS (abbreviations), or are ≤ 2 characters. Original casing is preserved after correction.
 
-**Important:** OCR noise does **not** penalise students. All LLM evaluation prompts explicitly instruct the model to interpret unclear or garbled text charitably and focus on the conceptual content of the answer.
+**Sentence Segmentation** (`_segment_sentences`): Uses spaCy `en_core_web_sm` sentence splitter. Falls back to regex on `.!?` if spaCy is unavailable.
+
+**Tokenisation** (`_tokenize`): spaCy lemmatisation with stopword and punctuation removal. Falls back to NLTK if spaCy is unavailable.
+
+**Important:** OCR noise does **not** penalise students. All LLM evaluation prompts explicitly instruct the model to ignore OCR-introduced typos and evaluate conceptual correctness only.
 
 ---
 
 ## Exam Parsers
 
-IntelliGrade-H contains three specialised parsers that understand the structure of Indian university exam documents:
-
 ### Question Paper Parser (`question_paper_parser.py`)
 
-Processes the teacher's question paper PDF and extracts a structured representation. Handles:
+Processes the teacher's question paper PDF and builds an `ExamPaper` structure stored in the database. Handles:
 
-- **Multi-part questions** — e.g. "Q3. (a) Define normalisation. [5 marks] (b) Explain 3NF with example. [5 marks]"
-- **OR alternatives** — e.g. "Q5. Either (a) ... OR (b) ..." — both alternatives are stored and the system evaluates whichever the student answered
-- **Mark extraction** — Detects marks in parentheses, brackets, or inline text and associates them with each question/part
-- **7 question types** auto-classified by the `question_classifier.py` module:
-
-| Type | Detection Cues |
-|---|---|
-| MCQ | Option labels (A/B/C/D), "choose the correct", "which of the following" |
-| Short Answer | Low mark value (1–3 marks), "define", "state", "list" |
-| Long Answer | High mark value (8–16 marks), "explain in detail", "describe" |
-| Descriptive | "discuss", "compare and contrast", "critically analyse" |
-| Code | "write a program", "implement", language keywords detected |
-| Diagram | "draw", "sketch", "illustrate with diagram" |
-| Mathematical | "derive", "prove", "calculate", equation symbols detected |
+- **Multi-part questions** — e.g. "Q3. (a) Define normalisation. [5 marks] (b) Explain 3NF. [5 marks]"
+- **OR alternatives** — e.g. "Q5. Either (a) ... OR (b) ..." — `is_or_option=True` is set on the alternative; the system evaluates whichever the student answered
+- **Mark extraction** — Detects marks in parentheses `(5)`, square brackets `[5]`, or inline text `5 marks`. Always reads from PDF — never hardcoded.
+- **Paper ID generation** — Builds a unique slug: `course_code + "_" + exam_name + "_" + set_name` (e.g. `S11BLH41_CAE1_Set-A`)
 
 ### Answer Key Parser (`answer_key_parser.py`)
 
-Processes the teacher's model answer PDF. Handles both typed PDFs (direct extraction) and scanned answer keys (OCR + structure extraction). Supports:
+Processes the teacher's model answer PDF. Supports:
 
-- Multiple sets (Set-A, Set-B) — answers are stored per-set and matched to the student's booklet set extracted from the cover page
-- Partial model answers (bullet points, keywords, formulae) — the system uses these as evaluation anchors rather than requiring verbatim match
-- Rubric attachments — if the teacher marks criteria inline (e.g. "1 mark for definition, 2 marks for example"), these are extracted and used by the Rubric Matcher
+- Typed PDFs (direct extraction via pdfplumber) and scanned answer keys (full OCR pipeline)
+- Set-A / Set-B variants — answers stored per-set and matched to student's booklet set from cover page
+- Inline rubric extraction — e.g. "1 mark for definition, 2 marks for example" is parsed into `Rubric` rows in the DB
+- Partial model answers (bullet points, keywords, formulae) used as evaluation anchors
 
 ### Student Answer Parser (`student_answer_parser.py`)
 
-This is the most complex parser. It segments a student's handwritten booklet into individual answers and maps each to the correct question. Challenges handled:
+The most complex parser — segments a handwritten booklet into per-question answers. Challenges handled:
 
-- **Out-of-order answers** — Students sometimes answer Q5 before Q3. The parser uses question number detection (written by the student) to map answers correctly.
-- **Multi-page answers** — Answers that span page boundaries are detected and merged.
-- **Answer continuation markers** — "Contd..." and similar are handled.
-- **LLM-assisted segmentation** — For ambiguous cases where the question number is unclear, the LLM infers which question an answer segment belongs to based on its content.
-- **Cover page extraction** — Roll number, name, course code, semester, set (A/B), and date are extracted from the cover page using a dedicated LLM prompt.
+- **Out-of-order answers** — Question number written by the student is detected; answers are mapped to the correct question regardless of order
+- **Multi-page answers** — Page boundary detection and merge via continuation marker detection ("Contd...", "P.T.O.")
+- **LLM-assisted segmentation** — When question number is ambiguous or missing, the LLM infers which question the answer segment belongs to based on content
+- **Cover page extraction** — A dedicated LLM prompt extracts: roll number, student name, course code, course name, semester, exam set (A/B), date, programme, and batch
+
+Each extracted answer is stored as a `StudentAnswerText` row linked to its `StudentBooklet`.
+
+---
+
+## Question Classifier
+
+`question_classifier.py` — `QuestionClassifier` class. Two-stage classification:
+
+**Stage 1 — LLM:** Sends the question text to the LLM with a structured JSON prompt. Returns type, confidence (0–1), and one-sentence reasoning.
+
+**Stage 2 — Rule-based fallback** (used when LLM fails or is unavailable):
+
+| Type | Key detection patterns |
+|---|---|
+| `mcq` | Lettered options `A) B) C) D)`, "which of the following", "choose the correct" |
+| `true_false` | "true or false", "state whether", "T/F" |
+| `fill_blank` | Underscores `____`, brackets `[...]`, "fill in", "complete the" |
+| `numerical` | "calculate", "compute", "find", "solve" + result-type words ("value", "area", "force") |
+| `diagram` | "draw", "sketch", "label", "illustrate", "flowchart" |
+| `short_answer` | "define", "state", "list", "name", "what is" and question < 30 words |
+| `open_ended` | "explain", "describe", "discuss", "analyze", "compare", "evaluate" |
+
+Default when no pattern matches: `open_ended` with confidence 0.50.
+
+**Routing impact:** The classifier determines the grading path:
+- `mcq`, `true_false`, `fill_blank`, `numerical` → **Deterministic grading** (no LLM, no similarity)
+- `open_ended`, `short_answer`, `diagram` → **Full LLM + similarity pipeline**
 
 ---
 
 ## Evaluation Engine
 
-Each student answer is evaluated by five parallel components, whose scores are then combined by the Hybrid Scoring Engine.
+`evaluator.py` — `EvaluationEngine` class. Routes each question to the appropriate grading path.
 
-### 1. LLM Evaluator (`llm_evaluator.py`)
+### Deterministic Question Types
 
-The LLM receives the student answer, the model answer, the question text, the maximum marks, and the question type. It returns:
+**MCQ (`_evaluate_mcq`):** Extracts the selected option letter (A–E) from OCR text using regex patterns (circled letter, standalone letter, underline). If OCR confidence < 0.5 and the full option texts are available, the `MCQ_VALIDATION_PROMPT` is sent to the LLM to infer the intended option. Score = `max_marks` if correct, 0 otherwise.
 
-- A **numerical score** (bounded to max marks)
-- **Strengths** — what the student correctly covered
-- **Missing concepts** — what was absent or incorrect
-- **Improvement suggestions** — specific guidance for the student
-- **Score rationale** — explanation of why this score was awarded
+**True/False (`_evaluate_true_false`):** Extracts True/False/T/F from text using regex. Score = `max_marks` if correct, 0 otherwise.
 
-The prompt template is selected automatically based on question type (see [LLM Integration](#llm-integration)). The LLM is explicitly told to ignore OCR noise in the student's answer.
+**Numerical (`_evaluate_numerical_or_llm`):** Extracts a number from OCR text using regex. If it matches the expected answer within a small tolerance, full marks are awarded. If extraction fails, falls back to LLM evaluation.
 
-### 2. Sentence-BERT Semantic Similarity (`similarity.py`)
+### Open-Ended Questions — 5-Component Pipeline
 
-`sentence-transformers/all-MiniLM-L6-v2` computes a cosine similarity between the student answer and model answer embeddings. This catches cases where the student used different but correct terminology (e.g. "heap data structure" vs "priority queue implementation") that keyword matching would miss.
+**Component 1: LLM Evaluator (`llm_evaluator.py`)**
 
-Additionally, the module performs **sentence-level breakdown**: each sentence of the student answer is individually compared against each sentence of the model answer. This produces a per-sentence similarity matrix displayed in the dashboard, showing exactly which concepts the student covered and which were absent.
+The LLM receives: question text, model answer, student answer (OCR-extracted), max marks, question type, and optionally rubric criteria. It returns structured JSON:
 
-### 3. Rubric Matcher (`rubric_matcher.py`)
+```json
+{
+  "score": 7.5,
+  "confidence": 0.85,
+  "strengths": ["..."],
+  "missing_concepts": ["..."],
+  "feedback": "...",
+  "explanation": "..."
+}
+```
 
-Uses `cross-encoder/nli-deberta-v3-small` for zero-shot Natural Language Inference. Each rubric criterion (e.g. "Student correctly defines primary key") is treated as a hypothesis, and the student answer is the premise. The NLI model determines whether the criterion is `entailed`, `neutral`, or `contradicted` — without any task-specific training data required.
+The `explanation` field is a one-sentence rationale for the exact score awarded — useful for teacher review and student transparency.
 
-This enables rubric-based marking even when the teacher has not manually created structured rubrics — the system infers rubric criteria from the model answer itself.
+**Component 2: Sentence-BERT Semantic Similarity (`similarity.py`)**
 
-### 4. Keyword Coverage
+`SemanticSimilarityModel` wraps `sentence-transformers/all-MiniLM-L6-v2`. Two methods:
 
-Extracts domain keywords from the model answer using TF-IDF weighting and checks what fraction of them appear in the student answer. Keywords are matched after lemmatisation (e.g. "normalised" matches "normalisation") and synonyms are resolved using a domain-specific vocabulary. This component acts as a fast, interpretable sanity check alongside the more sophisticated semantic and LLM methods.
+- `compute_similarity(student, teacher)` → overall cosine similarity [0, 1]
+- `compute_sentence_level(student, teacher)` → per-sentence matrix: each student sentence is matched to its most similar teacher sentence, returning `student_sentence`, `best_match_teacher`, and `similarity` score. Used for the heatmap in the dashboard.
 
-### 5. Length Normalisation
+Both inputs are normalised embeddings; the score is clamped to [0, 1].
 
-A mild penalty/bonus applied based on answer length relative to expected length for the question type and marks. Very short answers (under 20% of expected length) receive a small penalty. This prevents the LLM from being overly generous with one-line answers to 10-mark questions. The weight is deliberately low (5%) to avoid punishing concise but correct answers.
+The model can also be fine-tuned on institution-specific QA pairs via `fine_tune(training_data, output_dir)` using `CosineSimilarityLoss`.
 
-### 6. Diagram Detector (`diagram_detector.py`)
+**Component 3: Rubric Matcher (`rubric_matcher.py`)**
 
-YOLOv8n runs on each page to detect drawn figures, flowcharts, circuit diagrams, and other visual content. For questions that require a diagram (detected by the Question Classifier), the presence of a diagram contributes to the student's score. This also flags cases where a student drew something but the OCR missed it entirely — the evaluator is notified to review manually.
+`RubricMatcher` uses `cross-encoder/nli-deberta-v3-small` for zero-shot NLI classification. For each rubric criterion, the student answer is the NLI premise and the criterion is the hypothesis. Criteria with entailment probability ≥ threshold (default 0.5) are marked as covered.
+
+**Rubric matching is automatically skipped** for `mcq`, `true_false`, and `numerical` question types — it returns an empty `RubricResult` with zero scores for these.
+
+Optional BERT fine-tuning: `train_finetuned(training_data, output_dir)` fine-tunes `bert-base-uncased` as a binary sequence classifier on labelled `(answer, criterion, present: 0/1)` pairs. This improves rubric detection precision for institutions that build a correction dataset over time.
+
+**Component 4: Keyword Coverage**
+
+TF-IDF-style keyword extraction from the model answer. Lemmatised tokens from the student answer are checked against the keyword set. The coverage ratio (0–1) reflects the fraction of key domain terms present in the student's response.
+
+**Component 5: Length Normalisation**
+
+Compares student answer word count to model answer word count. Returns a score ≤ 1.0. Very short answers receive a mild penalty. Deliberately low weight (5%) to avoid punishing concise but correct answers.
+
+### Diagram Detection (`diagram_detector.py`)
+
+YOLOv8n runs on each page to detect drawn figures, flowcharts, tables, and circuit diagrams. For questions classified as `diagram` type, the presence of a detected figure contributes to the evaluation. The detection confidence threshold is configurable via `DIAGRAM_CONF_THRESHOLD` (default 0.35).
+
+### Batch Evaluation
+
+`evaluate_batch(answers_list)` evaluates multiple answers in one call, returning a list of `EvaluationResult` objects. Used internally by `POST /booklet/{id}/evaluate` to process all answers in a student booklet in a single API request.
 
 ---
 
@@ -309,122 +400,161 @@ YOLOv8n runs on each page to detect drawn figures, flowcharts, circuit diagrams,
 
 ```
 Final Score =
-  0.40 × LLM Evaluation Score        (Groq LLaMA 3.3-70B / Claude Haiku)
-  0.25 × Semantic Similarity          (Sentence-BERT cosine similarity)
-  0.20 × Rubric Coverage              (Zero-Shot NLI)
-  0.10 × Keyword Coverage
-  0.05 × Length Normalisation
+  LLM_WEIGHT        × llm_score           (default: 0.40)
+  + SIMILARITY_WEIGHT × similarity_score  (default: 0.25)
+  + RUBRIC_WEIGHT     × rubric_coverage   (default: 0.20)
+  + KEYWORD_WEIGHT    × keyword_coverage  (default: 0.10)
+  + LENGTH_WEIGHT     × length_norm       (default: 0.05)
 ```
 
-The final score is **clamped to [0, max_marks]** for that question — it can never exceed the allocated marks or go below zero.
+The result is **clamped to [0, max_marks]**.
 
-**Why these weights?** The LLM gets the highest weight (40%) because it provides the most holistic evaluation — it understands context, can assess reasoning quality, and handles domain-specific language. Semantic similarity (25%) catches correct ideas expressed differently. Rubric coverage (20%) provides structured, criterion-based fairness. Keyword coverage (10%) provides a fast, transparent check. Length normalisation (5%) is a guard against trivially short answers.
-
-**Weights are fully configurable** via `.env` (see `LLM_WEIGHT`, `SIMILARITY_WEIGHT`, etc.). The system validates at startup that weights sum to 1.0 and raises a warning if they do not — preventing silent grade inflation or deflation.
+All five weights are configurable via `.env`. `config.py` validates at startup that they sum to 1.0 (tolerance ±0.01) and raises a `UserWarning` if they do not, explicitly stating whether scores will be inflated or deflated.
 
 ---
 
 ## LLM Integration
 
-### Primary: Groq — `llama-3.3-70b-versatile`
+`llm_provider.py` — `LLMClient` class. A singleton accessed via `get_llm_client()`.
 
-Groq provides extremely fast inference (typically under 2 seconds per evaluation) at no cost up to generous rate limits. It handles all answer evaluations, answer key extraction, booklet segmentation, cover page extraction, and MCQ disambiguation.
+### Provider Selection
 
-### Fallback: Anthropic Claude — `claude-haiku-4-5-20251001`
+Set `LLM_PROVIDER` in `.env`:
+- `LLM_PROVIDER=groq` (default) — Groq primary, Claude fallback
+- `LLM_PROVIDER=claude` — Claude primary, Groq fallback
 
-Claude Haiku activates automatically when:
-- `ANTHROPIC_API_KEY` is set in `.env`, **and**
-- Groq returns an error, rate limit, or timeout
+The `_ordered_providers()` method returns the list in the correct order. Offline heuristic is always the final fallback.
 
-No manual switching is required. The fallback is transparent to the teacher.
+### Retry Logic
 
-### Prompt Strategies
+- **Groq:** 3 attempts. On rate-limit errors (HTTP 429) or "rate" in error message: exponential backoff `2^attempt` seconds. Other errors: linear backoff `attempt` seconds.
+- **Claude:** 2 attempts. On overload errors (HTTP 529): exponential backoff.
 
-The system selects the appropriate prompt template automatically based on question type:
+### Token Cost Logging
 
-| Prompt | Used for | What it emphasises |
+After each Groq call, the logger records: `groq/llama-3.3-70b-versatile in 1234ms | 856 tokens | ~$0.000504`. Cost is estimated at `tokens × $0.00000059` (llama-3.3-70b approximate rate).
+
+### API Methods
+
+| Method | Description |
+|---|---|
+| `generate(prompt)` | Single-prompt call, returns `LLMResponse(text, provider, model, latency_ms)` |
+| `generate_json(prompt)` | `generate()` + JSON parsing with fallback to safe zero-score dict |
+| `complete(system, user)` | Structured system+user call, returns raw text string |
+
+### Prompt Templates (`evaluation_prompts.py`)
+
+| Template | Used when | Key characteristics |
 |---|---|---|
-| `STANDARD_PROMPT` | General open-ended answers | Conceptual accuracy, completeness, clarity |
-| `CS_ENGINEERING_PROMPT` | DBMS, algorithms, OS, Networks, code | Technical precision, correct terminology, algorithmic correctness |
-| `RUBRIC_PROMPT` | Questions with explicit rubric criteria | Per-criterion mark allocation, structured breakdown |
-| `STRICT_PROMPT` | Board-exam style marking | Exact keyword coverage, penalises vague answers |
-| `MCQ_VALIDATION_PROMPT` | MCQ when OCR confidence < 0.5 | Disambiguates likely intended option from noisy OCR |
+| `STANDARD_PROMPT` | General open-ended | 6-level scoring ladder, OCR tolerance, `explanation` field |
+| `CS_ENGINEERING_PROMPT` | DBMS, algorithms, OS, networks, ML | Technical criteria checklist, code OCR tolerance, `{rubric_section}` slot |
+| `RUBRIC_PROMPT` | Questions with explicit rubric | `rubric_breakdown` per criterion with `awarded/max/reason` |
+| `STRICT_PROMPT` | Board-exam marking | 5-level scheme, explicitly penalises vague/padded answers |
+| `MCQ_VALIDATION_PROMPT` | MCQ, OCR confidence < 0.5 | Returns `detected_option` (A/B/C/D or null) + `confidence` + `reasoning` |
 
-### LLM Output Format
-
-All evaluation LLM calls return structured JSON, validated by Pydantic v2 schemas in `schemas.py`:
-
-```json
-{
-  "score": 7.5,
-  "max_marks": 10,
-  "breakdown": {
-    "llm_score": 7.5,
-    "similarity_score": 0.74,
-    "rubric_score": 0.60,
-    "keyword_score": 0.55,
-    "length_score": 0.90
-  },
-  "feedback": {
-    "strengths": ["Correctly defined normalisation", "Gave relevant example of 2NF"],
-    "missing_concepts": ["Did not mention BCNF", "No discussion of anomalies"],
-    "suggestions": ["Revise BCNF definition", "Include update/delete anomaly examples"],
-    "rationale": "Student demonstrated understanding of 1NF and 2NF but missed higher normal forms."
-  }
-}
-```
+All prompts include the hard constraint: `"Your awarded score MUST be between 0 and {max_marks} inclusive"` and explicit OCR tolerance instructions.
 
 ---
 
 ## Dashboard Features
 
-The teacher dashboard (`frontend/dashboard.py`) is built with Streamlit and provides a complete grading workflow in a browser interface requiring no technical knowledge to use.
+The teacher dashboard (`frontend/dashboard.py`) is built with Streamlit.
 
 ### Paper Manager
 
-Upload a question paper PDF → the system auto-extracts every question with its parts, marks, type, and OR alternatives. The teacher reviews the extracted structure and can correct any parsing errors before proceeding. Extracted papers are stored and reused across multiple evaluation sessions.
+Upload a question paper PDF → auto-extract every question with parts, marks, type, and OR alternatives → teacher reviews and corrects any parsing errors → paper stored in DB as `ExamPaper` + `ExamQuestion` rows, reused across sessions.
 
 ### Answer Key Manager
 
-Upload the teacher's model answer PDF → auto-extracts model answers per question. Supports Set-A / Set-B variants. If the PDF is typed, extraction is instant. If scanned, OCR is applied. The teacher can edit extracted answers directly in the dashboard.
+Upload teacher's model answer PDF → auto-extract model answers per question → supports Set-A / Set-B → teacher can edit extracted answers directly → stored in DB as `teacher_answer` on each `ExamQuestion`.
 
 ### Student Booklets
 
-Upload a single scanned booklet (PDF or image):
-
-1. Cover page metadata is extracted (roll number, name, course, set)
-2. The booklet is OCR'd and segmented into individual answers
-3. Each answer is evaluated against the corresponding model answer
-4. A structured result view shows: score, max marks, strengths, missing concepts, suggestions, and a sentence-level similarity heatmap
+Upload a single scanned booklet:
+1. Cover page metadata extracted (roll number, name, course code, set, semester)
+2. Booklet OCR'd and segmented → stored as `StudentBooklet` + `StudentAnswerText` rows
+3. All answers evaluated: `POST /booklet/{id}/evaluate` runs `evaluate_batch()` internally
+4. Result view: score, max marks, strengths, missing concepts, feedback, sentence-level similarity heatmap, `explanation` field, OCR confidence
 
 ### Bulk Upload
 
-Upload an entire class's booklets at once. The system processes all booklets in parallel (configurable via `OCR_WORKERS`). Results are shown in a class-wide table. Export to CSV includes: roll number, question-wise marks, total marks, and feedback per question.
+Upload full class booklets. Processed in parallel via `OCR_WORKERS`. Results in class-wide table. CSV export includes: roll number, question-wise marks, total, and per-question feedback.
 
 ### Analytics
 
-After bulk evaluation, the Analytics page shows:
-
-- **MAE** (Mean Absolute Error) — average deviation of AI scores from teacher-corrected scores
-- **Pearson Correlation** — linear agreement between AI and teacher scores
-- **Cohen's Kappa** — inter-rater agreement corrected for chance
-- **Accuracy within ±1 mark** and **±0.5 marks**
-- **Score distribution chart** — histogram of AI scores vs teacher scores
-- **Per-question breakdown** — which questions showed the highest AI-teacher disagreement
+After bulk evaluation:
+- MAE, Pearson r, Cohen's Kappa (linear-weighted), accuracy within ±1 and ±0.5 marks
+- Score distribution histogram (AI vs teacher)
+- Per-question breakdown showing highest disagreement questions
+- `MetricsSnapshot` persists metrics to DB so history is retained across sessions
 
 ---
 
 ## Evaluation Metrics & Targets
 
-These are the system's design targets for evaluation quality, validated against a held-out set of manually graded booklets:
+`metrics.py` — `compute_metrics()` and `compute_mcq_metrics()`.
 
-| Metric | Target | What it measures |
+The module supports three modes, auto-routed by `question_type`:
+
+**Open-ended / Mixed:**
+
+| Metric | Target | Description |
 |---|---|---|
-| Mean Absolute Error (MAE) | < 0.8 marks | Average absolute difference between AI score and expert score |
-| Pearson Correlation | > 0.85 | Linear agreement trend between AI and expert scores |
-| Cohen's Kappa | > 0.75 | Agreement adjusted for chance — 0.75+ is "substantial agreement" |
-| Accuracy within ±1 mark | > 90% | Fraction of answers scored within 1 mark of expert |
-| Accuracy within ±0.5 marks | > 70% | Stricter threshold — near-exact agreement rate |
+| MAE | < 0.8 marks | Mean absolute error vs expert |
+| Pearson r | > 0.85 | Linear agreement |
+| Cohen's Kappa (linear-weighted) | > 0.75 | Agreement corrected for chance |
+| Accuracy within ±1 mark | > 90% | |
+| Accuracy within ±0.5 marks | > 70% | Near-exact agreement |
+
+**MCQ (via `compute_mcq_metrics`):** Takes raw option letters (`predicted_options`, `correct_options`) and returns accuracy, `mcq_n_correct`, `mcq_n_wrong`. Also available as a binary-score path in `compute_metrics()`.
+
+`MetricsSnapshot` is a database table that caches the latest metrics and is recomputed in a background thread after each bulk evaluation, so the `/metrics` endpoint always returns fast without recomputing from scratch.
+
+---
+
+## Database Schema
+
+`database.py` — SQLAlchemy models. SQLite (dev) or PostgreSQL (prod) via `DATABASE_URL`.
+
+### Core Tables
+
+**`ExamPaper`** — One row per uploaded question paper PDF.
+- `paper_id`: unique slug (e.g. `S11BLH41_CAE1_Set-A`)
+- Metadata: `course_code`, `course_name`, `exam_name`, `total_marks`, `duration_hours`, `exam_date`, `batch`, `programme`, `semester`, `set_name`
+- Relationships: → `ExamPart[]`, → `ExamQuestion[]`, → `Submission[]`
+
+**`ExamPart`** — One row per part within a paper (e.g. Part-A, Part-B).
+- `marks_per_question`, `num_questions`, `instructions`
+
+**`ExamQuestion`** — One row per question extracted from the paper.
+- `question_number`, `question_text`, `marks` (always from PDF), `question_type`, `is_or_option`, `teacher_answer`, `correct_option` (MCQ)
+- Relationships: → `Rubric[]`
+
+**`Student`** — One row per student.
+- `student_code` (unique), `name`
+
+**`StudentBooklet`** — One row per uploaded student booklet PDF.
+- Links to `Student` and `ExamPaper`
+- Stores: `file_path`, `roll_number`, `student_name`, `exam_set`, `course_code`, `semester`
+- Relationships: → `StudentAnswerText[]`
+
+**`StudentAnswerText`** — One row per (booklet, question_number) pair.
+- Stores the segmented OCR text for each answer
+- Links to `ExamQuestion` for evaluation
+
+**`Submission`** — One evaluation request (legacy single-question path).
+- Links to `Student`, `Question` or `ExamPaper` + `ExamQuestion`
+
+**`Result`** — One row per evaluated submission.
+- Stores all five component scores, final score, max marks, feedback JSON (strengths, missing_concepts), OCR confidence, question type, evaluation time
+
+**`Rubric`** — One row per rubric criterion.
+- Can be linked to legacy `Question` or new `ExamQuestion`
+- `element` (criterion text), `max_marks`
+
+**`MetricsSnapshot`** — Cached metrics. Two rows max (open-ended, MCQ). Updated in background after bulk evaluations. `upsert()` creates or replaces on type key.
+
+**Auto-migration:** `_migrate_db()` runs at startup and adds any missing columns to existing tables (e.g. adding `student_booklet` table columns on upgrade from older versions). No manual schema migration needed.
 
 ---
 
@@ -434,19 +564,20 @@ These are the system's design targets for evaluation quality, validated against 
 |---|---|---|
 | OCR (cloud) | Google Vision API, Mistral OCR, Azure AI Vision | High-accuracy cloud OCR with free tiers |
 | OCR (local) | PaddleOCR, Tesseract (PSM 11), TrOCR-Large | Fully offline fallback engines |
-| Image Processing | OpenCV, PIL | Deskew, CLAHE, adaptive threshold, line segmentation |
-| Spell Correction | pyspellchecker + custom domain vocab | Post-OCR text cleaning |
-| NLP | spaCy `en_core_web_sm` | Tokenisation, POS tagging, sentence splitting |
+| Image Processing | OpenCV, PIL | Upscale, deskew, CLAHE(3.0), adaptive threshold, line segmentation |
+| Spell Correction | pyspellchecker + CS/engineering domain vocab | Post-OCR text cleaning |
+| NLP | spaCy `en_core_web_sm` + NLTK fallback | Tokenisation, POS tagging, sentence splitting |
 | Semantic Similarity | Sentence-BERT `all-MiniLM-L6-v2` | Cosine similarity + sentence-level breakdown |
-| Rubric Matching | `cross-encoder/nli-deberta-v3-small` | Zero-shot NLI rubric coverage |
-| Diagram Detection | YOLOv8n (Ultralytics) | Detects drawn diagrams and figures in scanned pages |
-| LLM (primary) | Groq — `llama-3.3-70b-versatile` | Fast, free, high-quality answer evaluation |
-| LLM (fallback) | Anthropic — `claude-haiku-4-5-20251001` | Automatic fallback when Groq is unavailable |
+| Rubric Matching | `cross-encoder/nli-deberta-v3-small` | Zero-shot NLI; optional BERT fine-tuning |
+| Diagram Detection | YOLOv8n (Ultralytics) | Detects drawn diagrams in scanned pages |
+| LLM (primary) | Groq — `llama-3.3-70b-versatile` | Fast, free inference with retry/backoff |
+| LLM (fallback) | Anthropic — `claude-haiku-4-5-20251001` | Auto-activates when Groq fails |
 | Deep Learning | PyTorch, HuggingFace Transformers | TrOCR inference and fine-tuning |
-| Backend | FastAPI, SQLAlchemy | REST API with 20+ endpoints, async support |
-| Database | SQLite (dev) / PostgreSQL (prod) | Persistent storage of booklets, results, papers |
-| Frontend | Streamlit | Teacher dashboard — no frontend code required |
-| Containerisation | Docker, docker-compose | One-command deployment with service orchestration |
+| Schemas | Pydantic v2 | Request/response validation; validates all LLM JSON output |
+| Backend | FastAPI, SQLAlchemy | 25+ REST endpoints, async, auto-migration |
+| Database | SQLite (dev) / PostgreSQL (prod) | 9 tables; MetricsSnapshot for cached analytics |
+| Frontend | Streamlit | Teacher dashboard |
+| Containerisation | Docker, docker-compose | One-command deployment |
 
 ---
 
@@ -456,40 +587,40 @@ These are the system's design targets for evaluation quality, validated against 
 IntelliGrade-H/
 │
 ├── backend/
-│   ├── api.py                    # FastAPI routes (20+ endpoints)
-│   ├── evaluator.py              # Hybrid scoring engine — combines all sub-scores
-│   ├── llm_provider.py           # Groq + Claude multi-provider client with fallback logic
-│   ├── llm_evaluator.py          # LLM evaluation calls and prompt routing by question type
-│   ├── evaluation_prompts.py     # All prompt templates (STANDARD, CS, RUBRIC, STRICT, MCQ)
-│   ├── ocr_module.py             # 6-engine hybrid OCR cascade
-│   ├── preprocessor.py           # Image preprocessing (deskew, CLAHE, binarise, segment)
-│   ├── similarity.py             # Sentence-BERT cosine + sentence-level breakdown matrix
-│   ├── rubric_matcher.py         # Zero-shot NLI rubric coverage (DeBERTa cross-encoder)
-│   ├── question_classifier.py    # Auto question type detection (7 types)
-│   ├── question_paper_parser.py  # Question paper PDF parser — extracts questions, marks, parts
-│   ├── answer_key_parser.py      # Answer key PDF parser — supports Set-A/B, typed + scanned
-│   ├── student_answer_parser.py  # Student booklet parser, segmenter, cover page extractor
-│   ├── diagram_detector.py       # YOLOv8 + heuristic diagram detection
-│   ├── text_processor.py         # NLP cleaning, spell correction, normalisation
-│   ├── metrics.py                # MAE, Pearson r, Cohen's Kappa computation
-│   ├── database.py               # SQLAlchemy models + auto-migration
-│   ├── schemas.py                # Pydantic v2 request/response schemas (validates LLM output)
-│   └── config.py                 # Environment configuration with startup validation
+│   ├── api.py                    # FastAPI app — 25+ routes, lifespan OCR warm-up
+│   ├── evaluator.py              # EvaluationEngine — routes by question type, hybrid score
+│   ├── llm_provider.py           # LLMClient — Groq + Claude, retry/backoff, cost logging
+│   ├── llm_evaluator.py          # LLM evaluation calls, prompt selection by question type
+│   ├── evaluation_prompts.py     # 5 prompt templates (STANDARD, CS, RUBRIC, STRICT, MCQ)
+│   ├── ocr_module.py             # 6-engine hybrid OCR; typed-PDF fast-path; real-word scoring
+│   ├── preprocessor.py           # ImagePreprocessor: upscale, denoise, deskew, CLAHE, threshold
+│   ├── similarity.py             # SemanticSimilarityModel: cosine + sentence-level + fine_tune()
+│   ├── rubric_matcher.py         # RubricMatcher: zero-shot NLI + optional BERT fine-tuning
+│   ├── question_classifier.py    # QuestionClassifier: LLM → rule-based fallback, 7 types
+│   ├── question_paper_parser.py  # Parses question paper PDF → ExamPaper + ExamQuestion
+│   ├── answer_key_parser.py      # Parses answer key PDF → teacher answers, Set-A/B, rubrics
+│   ├── student_answer_parser.py  # Segments booklet → StudentBooklet + StudentAnswerText
+│   ├── diagram_detector.py       # YOLOv8n diagram detection with confidence threshold
+│   ├── text_processor.py         # TextProcessor: normalise, spell-correct, tokenise
+│   ├── metrics.py                # compute_metrics(), compute_mcq_metrics(), MetricsReport
+│   ├── database.py               # 9 SQLAlchemy models + auto-migration + MetricsSnapshot
+│   ├── schemas.py                # Pydantic v2 schemas — all request/response types
+│   └── config.py                 # Settings dataclass, weight validation, active_llm property
 │
 ├── frontend/
 │   └── dashboard.py              # Streamlit teacher dashboard (all pages)
 │
 ├── models/
-│   └── trocr-finetuned/          # Drop your fine-tuned model here — auto-detected at startup
+│   └── trocr-finetuned/          # Place fine-tuned model here — auto-detected at startup
 │
-├── uploads/                      # Uploaded PDFs stored here (auto-created on first run)
+├── uploads/                      # Uploaded PDFs (auto-created)
 ├── assets/                       # Images for README and dashboard
-├── Dockerfile.backend            # FastAPI container
-├── Dockerfile.frontend           # Streamlit container
-├── docker-compose.yml            # Orchestrates backend + frontend + PostgreSQL
-├── requirements.txt              # All Python dependencies pinned
-├── IntelliGrade_TrOCR_Finetune.ipynb  # Google Colab fine-tuning notebook
-├── run.py                        # Unified launcher (api / ui / both / init)
+├── Dockerfile.backend
+├── Dockerfile.frontend
+├── docker-compose.yml
+├── requirements.txt
+├── IntelliGrade_TrOCR_Finetune.ipynb
+├── run.py
 └── README.md
 ```
 
@@ -497,79 +628,66 @@ IntelliGrade-H/
 
 ## Quick Start
 
-If you want the system running in under 5 minutes with minimum configuration:
-
 ```bash
-# 1. Clone the repo
+# 1. Clone
 git clone https://github.com/your-repo/IntelliGrade-H.git
 cd IntelliGrade-H
 
-# 2. Install dependencies
+# 2. Install
 pip install -r requirements.txt
 python -m spacy download en_core_web_sm
 python -c "import nltk; nltk.download('stopwords'); nltk.download('punkt')"
 
-# 3. Get a free Groq API key at https://console.groq.com
-#    Then create your .env:
+# 3. Configure — only one line required
 echo "GROQ_API_KEY=gsk_your_key_here" > .env
 
-# 4. Start
+# 4. Run
 python run.py
 ```
 
-Open `http://localhost:8501` — the teacher dashboard is ready.
-
-The system works with **only a Groq API key**. All cloud OCR engines are optional — TrOCR and PaddleOCR handle OCR locally if no cloud keys are provided.
+Open `http://localhost:8501` — the teacher dashboard is ready. The system runs fully offline for OCR (TrOCR + PaddleOCR + Tesseract) with only Groq needed for LLM evaluation.
 
 ---
 
 ## Installation
 
-### Local Installation (Full)
+### Local
 
 ```bash
 # 1. Clone
 git clone https://github.com/your-repo/IntelliGrade-H.git
 cd IntelliGrade-H
 
-# 2. Install Python dependencies
+# 2. Python dependencies
 pip install -r requirements.txt
 
-# 3. Download spaCy and NLTK models
+# 3. NLP models
 python -m spacy download en_core_web_sm
 python -c "import nltk; nltk.download('stopwords'); nltk.download('punkt')"
 
-# 4. Install Tesseract (system dependency)
-# Linux:
-sudo apt install tesseract-ocr poppler-utils
-# macOS:
-brew install tesseract poppler
-# Windows:
-# Download installer: https://github.com/UB-Mannheim/tesseract/wiki
-# Then set TESSERACT_CMD in .env to the full path
+# 4. Tesseract (system package)
+# Linux:   sudo apt install tesseract-ocr poppler-utils
+# macOS:   brew install tesseract poppler
+# Windows: https://github.com/UB-Mannheim/tesseract/wiki
+#          Set TESSERACT_CMD= in .env to the full .exe path
 
-# 5. Configure and run
+# 5. PaddleOCR (optional — skip if only using cloud OCR)
+pip install paddlepaddle paddleocr
+
+# 6. Configure and run
 cp .env.example .env
 # Edit .env — add GROQ_API_KEY at minimum
 python run.py
 ```
 
-### Docker Installation (Recommended for Production)
-
-Docker handles all system dependencies automatically, including Tesseract, PaddleOCR, and PostgreSQL.
+### Docker (Recommended for Production)
 
 ```bash
-# 1. Clone and configure
-git clone https://github.com/your-repo/IntelliGrade-H.git
-cd IntelliGrade-H
-cp .env.example .env
-# Edit .env — add GROQ_API_KEY
-
-# 2. Build and start all services
+cp .env.example .env   # add GROQ_API_KEY
 docker compose up --build
 ```
 
-Docker Compose starts three services: `backend` (FastAPI on port 8000), `frontend` (Streamlit on port 8501), and `db` (PostgreSQL on port 5432). Data is persisted in a named Docker volume so results survive container restarts.
+Starts three containers: `backend` (port 8000), `frontend` (port 8501), `db` (PostgreSQL port 5432). Data persists in a named volume.
 
 ### System Requirements
 
@@ -579,46 +697,49 @@ Docker Compose starts three services: `backend` (FastAPI on port 8000), `fronten
 | RAM | 4 GB | 8 GB+ |
 | Disk | 5 GB (models) | 10 GB+ |
 | GPU | Not required | CUDA GPU for faster TrOCR |
-| OS | Linux / macOS / Windows | Ubuntu 22.04 LTS |
 
 ---
 
 ## Environment Configuration
 
-Copy `.env.example` to `.env` and fill in the values. Only `GROQ_API_KEY` is required.
+Only `GROQ_API_KEY` is required. All other settings have safe defaults.
 
 ```env
-# ── LLM (at least one key required) ──────────────────────────────────────────
+# ── LLM ────────────────────────────────────────────────────────────────────────
+# LLM_PROVIDER=groq   → Groq primary, Claude fallback
+# LLM_PROVIDER=claude → Claude primary, Groq fallback
 LLM_PROVIDER=groq
-GROQ_API_KEY=gsk_...                       # Free at console.groq.com — required
+GROQ_API_KEY=gsk_...                       # Required — free at console.groq.com
 GROQ_MODEL=llama-3.3-70b-versatile
 ANTHROPIC_API_KEY=sk-ant-...               # Optional — Claude auto-activates as fallback
 CLAUDE_MODEL=claude-haiku-4-5-20251001
+LLM_MAX_TOKENS=6000                        # Max output tokens per LLM call
+LLM_TEMPERATURE=0.1                        # Low = deterministic, consistent scoring
 
-# ── OCR Cloud APIs (each one improves accuracy — all optional) ────────────────
-GOOGLE_VISION_API_KEY=                     # Best accuracy — free 1000 units/month
-MISTRAL_API_KEY=                           # 1000 pages/month free
-AZURE_VISION_KEY=                          # 5000 pages/month free, no expiry
+# ── OCR Cloud APIs (all optional — each one you add improves accuracy) ─────────
+GOOGLE_VISION_API_KEY=                     # Free 1000 units/month
+MISTRAL_API_KEY=                           # Free 1000 pages/month
+AZURE_VISION_KEY=                          # Free 5000 pages/month, no expiry
 AZURE_VISION_ENDPOINT=https://your-resource.cognitiveservices.azure.com
 
-# ── OCR Local Engines ─────────────────────────────────────────────────────────
+# ── OCR Local ─────────────────────────────────────────────────────────────────
 TESSERACT_CMD=tesseract                    # Full path on Windows
-OCR_DPI=400                               # 300–400 DPI recommended for handwriting
-OCR_WORKERS=2                             # Parallel workers for bulk processing
+OCR_DPI=400                               # 300–400 DPI recommended
+OCR_WORKERS=2                             # Parallel local OCR threads
 PADDLEOCR_LANG=en
 
-# ── TrOCR (fine-tuned model auto-detected — no change needed after deploy) ────
-TROCR_FINETUNED_PATH=models/trocr-finetuned
-TROCR_MODEL_PATH=microsoft/trocr-large-handwritten
+# ── TrOCR ──────────────────────────────────────────────────────────────────────
+TROCR_MODEL_PATH=microsoft/trocr-large-handwritten  # Default HuggingFace model
+TROCR_FINETUNED_PATH=models/trocr-finetuned         # Auto-used when config.json found
 
 # ── Diagram Detection ─────────────────────────────────────────────────────────
 YOLO_MODEL_PATH=yolov8n.pt
-DIAGRAM_CONF_THRESHOLD=0.35
+DIAGRAM_CONF_THRESHOLD=0.35               # Lower = detect more (may increase FP)
 
 # ── Semantic Similarity ───────────────────────────────────────────────────────
 SBERT_MODEL=sentence-transformers/all-MiniLM-L6-v2
 
-# ── Hybrid Scoring Weights (must sum to 1.0 — validated at startup) ───────────
+# ── Hybrid Scoring Weights (must sum to 1.0) ──────────────────────────────────
 LLM_WEIGHT=0.40
 SIMILARITY_WEIGHT=0.25
 RUBRIC_WEIGHT=0.20
@@ -627,49 +748,52 @@ LENGTH_WEIGHT=0.05
 
 # ── Database ──────────────────────────────────────────────────────────────────
 DATABASE_URL=sqlite:///./intelligrade.db
-# Production: DATABASE_URL=postgresql://user:pass@localhost:5432/intelligrade
+# Prod: DATABASE_URL=postgresql://user:pass@localhost:5432/intelligrade
 
 # ── Upload / API ──────────────────────────────────────────────────────────────
 MAX_FILE_SIZE_MB=20
 UPLOAD_DIR=./uploads
 API_HOST=0.0.0.0
 API_PORT=8000
+LOG_LEVEL=INFO
 ```
 
-### Getting API Keys
+### `config.py` — Startup Validation
 
-| Key | Where to get it | Free tier |
-|---|---|---|
-| `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) | Generous free tier — required |
-| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) | Paid, optional fallback |
-| `GOOGLE_VISION_API_KEY` | [console.cloud.google.com](https://console.cloud.google.com) | 1000 units/month free |
-| `MISTRAL_API_KEY` | [console.mistral.ai](https://console.mistral.ai) | 1000 pages/month free |
-| `AZURE_VISION_KEY` | [portal.azure.com](https://portal.azure.com) | 5000 pages/month, no expiry |
+`get_settings()` (LRU-cached) runs two checks at startup:
+
+1. **Weight sum check:** If `LLM_WEIGHT + SIMILARITY_WEIGHT + RUBRIC_WEIGHT + KEYWORD_WEIGHT + LENGTH_WEIGHT ≠ 1.0 (±0.01)`, a `UserWarning` is raised stating whether scores will be inflated or deflated.
+2. **LLM key check:** If neither `GROQ_API_KEY` nor `ANTHROPIC_API_KEY` is set, a warning is raised that evaluation will use offline fallback scores.
+
+The `Settings.active_llm` property returns which provider will actually be used (`"groq"`, `"claude"`, or `"offline"`) based on which keys are present and what `LLM_PROVIDER` is set to.
 
 ---
 
 ## Running the System
 
 ```bash
-python run.py           # Start both API server and Streamlit dashboard
-python run.py api       # Start API server only (port 8000)
-python run.py ui        # Start dashboard only (port 8501)
-python run.py init      # Initialise/migrate database only
+python run.py           # Both API + dashboard
+python run.py api       # API only (port 8000)
+python run.py ui        # Dashboard only (port 8501)
+python run.py init      # Initialise / migrate database only
 ```
 
 | Service | URL |
 |---|---|
 | Teacher Dashboard | http://localhost:8501 |
 | REST API | http://localhost:8000 |
-| API Documentation (Swagger) | http://localhost:8000/docs |
-| API Documentation (Redoc) | http://localhost:8000/redoc |
+| API Docs (Swagger) | http://localhost:8000/docs |
+| API Docs (Redoc) | http://localhost:8000/redoc |
+| Health Check | http://localhost:8000/health |
 | Metrics Debug | http://localhost:8000/metrics/print |
+
+**Startup warm-up:** The API's `lifespan` handler runs `_warm_ocr()` in a background thread — this pre-loads TrOCR and PaddleOCR models so the first evaluation request doesn't incur model-loading latency.
 
 ---
 
-## 🔬 Fine-Tuning TrOCR on Your Exam Data
+## Fine-Tuning TrOCR on Your Exam Data
 
-Fine-tuning on handwriting samples from your own students is the **single highest-impact improvement** you can make to OCR accuracy. A fine-tuned model learns your students' specific handwriting style, subject vocabulary, and common abbreviations. The system auto-detects and uses your model — no configuration change required after deployment.
+Fine-tuning on handwriting samples from your students is the **single highest-impact improvement** you can make to OCR accuracy. The system auto-detects and uses your model — no configuration change required.
 
 ### Why Fine-Tune? Model Comparison
 
@@ -682,103 +806,63 @@ Fine-tuning on handwriting samples from your own students is the **single highes
 | **trocr-large, fine-tuned 1000+ samples** | **~6–11%** | **~8 GB** |
 | Google Vision API (reference) | ~3–8% | Paid per page |
 
-`trocr-large` has 4× more parameters than `trocr-small`. On variable, messy exam handwriting, this difference is decisive. The Colab free T4 GPU has 16 GB VRAM — `large` fits comfortably at batch size 8 with gradient checkpointing.
-
-On domain-specific vocabulary (DBMS terms, algorithm names, circuit labels), a fine-tuned model can **match or exceed Google Vision** because it is trained on your students' exact writing style — whereas Google's model is general-purpose.
-
 ### Fine-Tuning Workflow
 
-**Step 1 — Scan booklets** at 300–400 DPI (PNG). Anonymise student names before labelling.
+**Step 1 — Scan booklets** at 300–400 DPI (PNG). Anonymise student names.
 
-**Step 2 — Crop into line images.** Each image must contain exactly one line of handwriting. Use `preprocessor.py`'s `segment_lines()` method for automation, or crop manually.
+**Step 2 — Crop into line images.** Each image = one line. Use `preprocessor.py`'s `segment_lines()` for automation.
 
-**Step 3 — Label the images.** Create a `labels.txt` file in each split folder (tab-separated):
+**Step 3 — Label the images** (tab-separated `labels.txt`):
 
 ```
 0001.png	The mitochondria is the powerhouse of the cell
 0002.png	Newton second law states F equals ma
 ```
 
-Use [Label Studio](https://labelstud.io/) (free, runs locally) for a visual annotation interface. Two people can comfortably label 1000 samples in about one hour.
+Use [Label Studio](https://labelstud.io/) for visual annotation. Two people can label 1000 samples in ~1 hour.
 
-**Step 4 — Organise your dataset:**
-
-```
-My Drive/Intelligrade/datasets/handwriting/
-├── train/    images/ + labels.txt    (~80% of samples)
-├── val/      images/ + labels.txt    (~10% of samples)
-└── test/     images/ + labels.txt    (~10% of samples)
-```
-
-**Step 5 — Run the Colab notebook:**
-
-Open `IntelliGrade_TrOCR_Finetune.ipynb` → `Runtime → Change runtime type → T4 GPU` → Run all cells.
-
-**Step 6 — Deploy your model:**
-
-```
-1. Download trocr-finetuned/ folder from Google Drive
-2. Extract to: IntelliGrade-H/models/trocr-finetuned/
-   (the folder must contain config.json — its presence triggers auto-detection)
-3. Restart: python run.py
-
-System logs at startup:
-   Fine-tuned TrOCR model found at models/trocr-finetuned — using it.
-```
-
-No `.env` changes needed.
-
-### Dataset Format
+**Step 4 — Organise dataset:**
 
 ```
 datasets/handwriting/
-├── train/
-│   ├── images/
-│   │   ├── 0001.png
-│   │   ├── 0002.png
-│   │   └── ...
-│   └── labels.txt
-│
-├── val/
-│   ├── images/
-│   │   ├── 1001.png
-│   │   └── ...
-│   └── labels.txt
-│
-└── test/
-    ├── images/
-    │   ├── 2001.png
-    │   └── ...
-    └── labels.txt
+├── train/  images/ + labels.txt  (~80%)
+├── val/    images/ + labels.txt  (~10%)
+└── test/   images/ + labels.txt  (~10%)
 ```
 
-Each `labels.txt` line must follow:
+**Step 5 — Open Colab:** `IntelliGrade_TrOCR_Finetune.ipynb` → T4 GPU → Run all cells.
+
+**Step 6 — Deploy:**
 
 ```
-image_filename<TAB>transcribed_text
+1. Download trocr-finetuned/ from Google Drive
+2. Place at: IntelliGrade-H/models/trocr-finetuned/
+   (must contain config.json — triggers auto-detection)
+3. Restart: python run.py
 ```
 
-**Important rules:**
+System logs: `Fine-tuned TrOCR model found at 'models/trocr-finetuned' — using it.`
 
-- Use **tab (`\t`)** as separator — not spaces
-- Images must be **PNG or JPG**
-- Text must be **UTF-8 encoded**
-- Each image must contain exactly **one line of handwriting**
-- Filename must match exactly (case-sensitive on Linux)
+### Dataset Format Rules
+
+- Separator: **tab (`\t`)** — not spaces. Verify with `cat -A labels.txt | head -5` (tabs show as `^I`)
+- Images: **PNG or JPG**
+- Encoding: **UTF-8**
+- Each image: **exactly one line of handwriting**
 
 ### Training Configuration
 
-| Parameter | Value | Notes |
-|---|---|---|
-| Base model | microsoft/trocr-large-handwritten | Better than small for exam handwriting |
-| Epochs | 15 | Sufficient for 500–5000 samples |
-| Batch Size | 8 | Fits in 16 GB VRAM with FP16 |
-| Gradient Accumulation | 4 | Effective batch = 32 |
-| Learning Rate | 5e-5 | Safe starting point for fine-tuning |
-| Warmup Steps | 300 | Prevents early training instability |
-| Mixed Precision | FP16 | Halves memory usage, same accuracy |
-| Data Augmentation | Enabled | Random brightness, contrast, rotation ±5° |
-| Evaluation Strategy | Per epoch | Saves best checkpoint automatically |
+| Parameter | Value |
+|---|---|
+| Base model | microsoft/trocr-large-handwritten |
+| Epochs | 15 |
+| Batch Size | 8 |
+| Gradient Accumulation | 4 (effective batch = 32) |
+| Learning Rate | 5e-5 |
+| Warmup Steps | 300 |
+| Mixed Precision | FP16 |
+| Data Augmentation | Enabled (brightness, contrast, rotation ±5°) |
+| Evaluation | Per epoch — saves best checkpoint |
 
 ### Expected Training Time
 
@@ -789,18 +873,7 @@ image_filename<TAB>transcribed_text
 | 5000 samples | ~2–3 hours |
 | 10000 samples | ~4–5 hours |
 
-GPU is strongly recommended. Training on CPU takes **10–20× longer**.
-
-### Expected OCR Accuracy After Fine-Tuning
-
-| Training Data | Character Error Rate (CER) |
-|---|---|
-| No fine-tuning (baseline) | ~15–22% |
-| 500 samples | ~10–15% |
-| 1000 samples | ~8–12% |
-| 5000 samples | ~5–8% |
-
-### Using the Fine-Tuned Model for Inference
+### Inference After Fine-Tuning
 
 ```python
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
@@ -812,86 +885,96 @@ model = VisionEncoderDecoderModel.from_pretrained("models/trocr-finetuned")
 image = Image.open("handwriting_line.png").convert("RGB")
 pixel_values = processor(image, return_tensors="pt").pixel_values
 generated_ids = model.generate(pixel_values)
-
 text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
 print(text)
 ```
 
 ### Fine-Tuning Troubleshooting
 
-**CUDA not detected**
+**CUDA not detected:** `Runtime → Change runtime type → GPU (T4)` in Colab, then re-run from start.
 
-```
-AssertionError: Torch not compiled with CUDA enabled
-```
+**Out of memory:** Set `BATCH_SIZE = 4` and ensure `gradient_checkpointing=True` in `TrainingArguments`.
 
-Go to `Runtime → Change runtime type → GPU (T4)` in Colab and re-run the notebook from the start.
+**Loss not decreasing:** Check for spaces instead of tabs in `labels.txt`; test image loading with `python -c "from PIL import Image; Image.open('0001.png')"`; split labels over 100 characters.
 
----
-
-**Out of memory (OOM)**
-
-Reduce batch size in the notebook:
-
-```python
-BATCH_SIZE = 4  # down from 8
-```
-
-Also ensure `gradient_checkpointing=True` is set in `TrainingArguments`.
-
----
-
-**Training loss not decreasing**
-
-Check for:
-- Spaces instead of tabs in `labels.txt` — verify with `cat -A labels.txt | head -5` (tabs show as `^I`)
-- Corrupted image files — test with `python -c "from PIL import Image; Image.open('0001.png')"`
-- Labels over 100 characters — these destabilise training; split long lines
-
----
-
-**Garbled output after deployment**
-
-Ensure you copied the entire `trocr-finetuned/` folder including `preprocessor_config.json` and `tokenizer_config.json` — not just the model weights. These files are required for correct image preprocessing and text decoding.
+**Garbled output after deployment:** You must copy the entire `trocr-finetuned/` folder including `preprocessor_config.json` and `tokenizer_config.json` — not just the weight files.
 
 ---
 
 ## API Reference
 
-The REST API is built with FastAPI and provides interactive documentation at `http://localhost:8000/docs`.
+Full interactive documentation at `http://localhost:8000/docs`. All endpoints listed below.
+
+### Paper & Answer Key
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/paper/upload` | Upload and parse a question paper PDF — returns structured questions, marks, types |
-| `GET` | `/papers` | List all stored exam papers |
-| `GET` | `/paper/{paper_id}` | Get full paper with all questions and their details |
-| `POST` | `/answer-key/upload` | Upload and extract answer key from teacher PDF |
-| `POST` | `/booklet/upload` | Upload a student booklet PDF — stores it, returns booklet ID |
-| `POST` | `/booklet/{id}/evaluate` | Run OCR + full evaluation pipeline on a stored booklet |
-| `POST` | `/evaluate` | Evaluate a single answer inline (no storage) |
-| `POST` | `/evaluate/paper` | Evaluate a student answer against a question from a stored paper |
-| `GET` | `/submissions` | List all evaluated student submissions with scores |
-| `GET` | `/submission/{id}` | Get full evaluation result for a single submission |
-| `PUT` | `/submission/{id}/score` | Teacher override — update a score after review |
-| `GET` | `/stats` | System statistics (total booklets, questions, average scores) |
-| `GET` | `/metrics` | AI accuracy metrics (MAE, Pearson r, Kappa) |
-| `GET` | `/metrics/print` | Print metrics to server log (debug) |
-| `POST` | `/rubric` | Upload rubric criteria for a specific question |
-| `POST` | `/bulk/evaluate` | Batch evaluate multiple booklets — returns job ID |
-| `GET` | `/bulk/{job_id}` | Poll bulk evaluation job status and retrieve results |
-| `DELETE` | `/booklet/{id}` | Delete a booklet and all its evaluation results |
+| `POST` | `/paper/upload` | Upload question paper PDF — parses structure, stores as `ExamPaper` + `ExamQuestion` |
+| `GET` | `/papers` | List all stored exam papers (lightweight, no questions) |
+| `GET` | `/paper/{paper_id}` | Get full paper with all questions, marks, types, and teacher answers |
+| `PATCH` | `/paper/{paper_id}/question/{q_num}` | Manually update a question's answer, type, or marks |
+| `DELETE` | `/paper/{paper_id}` | Delete a paper and all its questions |
+| `POST` | `/answer-key/upload` | Upload answer key PDF — links teacher answers to stored questions |
 
-### Example: Single Answer Evaluation
+### Student Booklets (Primary Path)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/booklet/upload` | Upload handwritten booklet PDF — OCR, segment, store as `StudentBooklet` |
+| `POST` | `/booklet/{id}/evaluate` | Run full evaluation on all answers in a booklet (calls `evaluate_batch()`) |
+| `GET` | `/booklets` | List all uploaded booklets |
+| `GET` | `/booklet/{id}` | Get a booklet's parsed answers with their OCR text |
+| `PATCH` | `/booklet/{id}/answer/{q_num}` | Manually correct a student's OCR-extracted answer text |
+| `DELETE` | `/booklet/{id}` | Delete a booklet and all its answers and results |
+
+### Single-Question Evaluation (Legacy & Flexible Path)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/upload` | Upload a single answer sheet image or PDF — stores as `Submission` |
+| `POST` | `/ocr/{submission_id}` | Run OCR on an uploaded submission |
+| `POST` | `/evaluate` | Evaluate a submission with manually provided question/answer/marks |
+| `POST` | `/evaluate/paper` | Evaluate against a stored `ExamQuestion` — marks and answer loaded from DB |
+| `GET` | `/result/{submission_id}` | Get the evaluation result for a submission |
+
+### Rubric, Metrics & System
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/rubric` | Upload rubric criteria for a question |
+| `GET` | `/submissions` | List all submissions with their results |
+| `GET` | `/stats` | System statistics (total booklets, submissions, average scores) |
+| `GET` | `/metrics` | Cached AI accuracy metrics (MAE, Pearson r, Kappa) from `MetricsSnapshot` |
+| `GET` | `/metrics/compute` | Ad-hoc metric recomputation from provided score lists |
+| `GET` | `/metrics/print` | Print full metrics report to server log (debug) |
+| `GET` | `/health` | Health check — returns status, version, and which models are loaded |
+| `GET` | `/` | Root — returns API name and version |
+
+### Example: Evaluate Against a Stored Paper Question
+
+```bash
+curl -X POST http://localhost:8000/evaluate/paper \
+  -H "Content-Type: application/json" \
+  -d '{
+    "submission_id": "550e8400-e29b-41d4-a716-446655440000",
+    "exam_paper_id": "S11BLH41_CAE1_Set-A",
+    "question_number": 3
+  }'
+```
+
+The system loads `max_marks`, `question_type`, and `teacher_answer` from the DB — nothing is hardcoded in the request.
+
+### Example: Single Answer Evaluation (Inline)
 
 ```bash
 curl -X POST http://localhost:8000/evaluate \
   -H "Content-Type: application/json" \
   -d '{
-    "question": "Explain the concept of normalisation in DBMS.",
-    "student_answer": "Normalisation is the process of organising data in a database to reduce redundancy. It involves dividing large tables into smaller ones and defining relationships.",
-    "model_answer": "Normalisation is a technique to organise a relational database to reduce data redundancy and improve data integrity by decomposing tables into well-structured tables following normal forms (1NF, 2NF, 3NF, BCNF).",
+    "submission_id": "550e8400-e29b-41d4-a716-446655440001",
+    "question": "Explain normalisation in DBMS.",
+    "teacher_answer": "Normalisation reduces redundancy via 1NF, 2NF, 3NF, BCNF.",
     "max_marks": 5,
-    "question_type": "short_answer"
+    "question_type": "open_ended"
   }'
 ```
 
@@ -899,30 +982,26 @@ curl -X POST http://localhost:8000/evaluate \
 
 ```json
 {
-  "score": 3.5,
-  "max_marks": 5,
-  "breakdown": {
-    "llm_score": 3.8,
-    "similarity_score": 0.74,
-    "rubric_score": 0.60,
-    "keyword_score": 0.55,
-    "length_score": 0.90
-  },
-  "feedback": {
-    "strengths": [
-      "Correctly defined normalisation as reducing redundancy",
-      "Mentioned decomposition of tables"
-    ],
-    "missing_concepts": [
-      "No mention of normal forms (1NF, 2NF, 3NF, BCNF)",
-      "Data integrity not discussed"
-    ],
-    "suggestions": [
-      "Study the specific normal forms and their conditions",
-      "Include examples of anomalies that normalisation prevents"
-    ],
-    "rationale": "Student shows basic understanding but lacks knowledge of formal normal forms."
-  }
+  "submission_id": "550e8400-...",
+  "question_id": "...",
+  "student_id": "...",
+  "exam_paper_id": "S11BLH41_CAE1_Set-A",
+  "question_number": 3,
+  "llm_score": 3.8,
+  "similarity_score": 0.74,
+  "final_score": 3.5,
+  "max_marks": 5.0,
+  "strengths": ["Correctly defined normalisation", "Mentioned table decomposition"],
+  "missing_concepts": ["Did not mention BCNF", "No discussion of anomalies"],
+  "feedback": "Good basic understanding. Study higher normal forms.",
+  "rubric_coverage": {"definition": 1, "example": 1, "bcnf": 0},
+  "question_type": "open_ended",
+  "ocr_text": "Normalisation is the process of organising data...",
+  "ocr_confidence": 0.87,
+  "confidence": 0.82,
+  "word_count": 34,
+  "evaluation_time_sec": 1.4,
+  "percentage": 70.0
 }
 ```
 
@@ -930,37 +1009,36 @@ curl -X POST http://localhost:8000/evaluate \
 
 ## Ethical Considerations
 
-IntelliGrade-H is designed as a **grading assistant** that augments teacher judgment — not a replacement for it. Several design decisions reflect this principle:
+**Teacher control** — Every AI-generated grade is provisional until the teacher reviews and approves it. `PATCH` endpoints allow correction of both OCR errors and score errors before finalisation.
 
-**Teacher control** — Every AI-generated grade is explicitly provisional until the teacher reviews and approves it. The dashboard makes it one click to adjust any mark. Bulk finalisation requires a deliberate teacher action.
+**Student privacy** — Student names and roll numbers are used only for matching within the institution's own infrastructure. No student identity data is included in LLM API calls — only the answer text.
 
-**Student privacy** — Student names and personally identifiable information are used only for matching and are not included in evaluation API calls. No student identity data is sent to LLM providers — only the text of their answer.
+**OCR noise does not penalise students** — All 5 prompt templates include an explicit instruction: *"Do NOT penalise OCR spelling errors — they are scanner artifacts, NOT student mistakes."*
 
-**OCR noise does not penalise students** — All LLM evaluation prompts explicitly instruct the model to interpret unclear or garbled text charitably. A student who wrote a correct answer that OCR misread should not lose marks because of a scanning error.
+**Transparent reasoning** — Every evaluation stores `strengths`, `missing_concepts`, `feedback`, and `explanation` (one-sentence score rationale). All fields are accessible via API and displayed in the dashboard.
 
-**Transparent reasoning** — Every evaluation stores the score rationale, strengths, missing concepts, and sentence-level similarity breakdown. Students and teachers can see exactly why a score was awarded. This is exportable per submission.
+**No bias amplification** — Prompts evaluate conceptual correctness only — not writing style, grammar, or language fluency — which could disadvantage non-native English speakers.
 
-**No bias amplification** — Evaluation prompts are designed to assess conceptual correctness only, not writing style, grammar, or language fluency — which could disadvantage non-native English speakers.
+**Scoring weight integrity** — `config.py` raises a `UserWarning` at startup if weights do not sum to 1.0, preventing silent grade inflation/deflation.
 
-**Scoring weight integrity** — The system validates at startup that scoring weights sum to 1.0 and logs a warning if they do not, preventing silent grade inflation or deflation from misconfiguration.
+**Rubric skipped for deterministic types** — The rubric matcher explicitly skips MCQ, True/False, and Numerical questions to avoid incorrect NLI-based partial credit on binary-graded items.
 
 ---
 
 ## Future Work
 
-- **Mathematical equation evaluation** — LaTeX-aware scoring for mathematics, physics, and engineering formula derivations
-- **Diagram understanding** — Vision-language models to evaluate drawn circuit diagrams, flowcharts, and architectural diagrams against expected structures
-- **Multilingual grading** — Support for Tamil, Hindi, and other regional languages in mixed-language answer booklets
-- **LMS integrations** — Direct grade push to Moodle, Google Classroom, and other LMS platforms
-- **Mobile scanning app** — iOS/Android app for scanning booklets with automatic deskew and upload quality check
-- **Continual learning** — Feedback loop from teacher corrections to improve evaluation accuracy over time without full retraining
-- **Plagiarism detection** — Cross-student similarity analysis to flag suspiciously similar answers in bulk evaluations
-- **Offline mode** — Fully air-gapped deployment using a local LLM (Ollama + Mistral 7B) for institutions with strict data policies
+- **Mathematical equation evaluation** — LaTeX-aware scoring for formula derivations and proofs
+- **Diagram understanding** — Vision-language models to evaluate drawn circuit diagrams and flowcharts structurally
+- **Multilingual grading** — Tamil, Hindi, and other regional languages in mixed-language booklets
+- **LMS integrations** — Direct grade push to Moodle, Google Classroom
+- **Mobile scanning app** — iOS/Android app with automatic deskew and upload quality check
+- **Continual learning** — Feedback loop from teacher corrections to improve accuracy over time
+- **Plagiarism detection** — Cross-student similarity analysis to flag suspiciously similar answers
+- **Offline LLM mode** — Fully air-gapped deployment using Ollama + Mistral 7B for strict data-policy environments
+- **Similarity model fine-tuning** — Institution-specific `fine_tune()` on historical QA pairs to improve domain accuracy
 
 ---
 
 ## License
 
-MIT License — free for academic and research use.
-
-You are free to use, modify, and distribute this software for academic, research, and institutional purposes. Commercial use is permitted under the same MIT terms.
+MIT License — free for academic and research use. Commercial use permitted under the same terms.
